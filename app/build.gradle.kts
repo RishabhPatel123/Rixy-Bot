@@ -2,11 +2,15 @@ import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesS
 
 plugins {
   alias(libs.plugins.android.application)
+  
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.roborazzi)
   alias(libs.plugins.secrets)
   alias(libs.plugins.google.services)
+  
+  
+  
 }
 
 android {
@@ -76,6 +80,10 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
+  implementation(libs.koin.android)
+  implementation(libs.koin.androidx.compose)
+  implementation(libs.koin.androidx.workmanager)
+  implementation(libs.androidx.work.runtime.ktx)
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)

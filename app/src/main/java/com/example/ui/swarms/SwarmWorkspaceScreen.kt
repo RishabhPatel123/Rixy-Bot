@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.FolderShared
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
@@ -35,10 +36,14 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -87,6 +92,7 @@ import com.example.ui.theme.ImmersiveTextPrimary
 import com.example.ui.theme.ImmersiveTextSecondary
 import com.example.ui.viewmodel.CoworkerViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SwarmWorkspaceScreen(
     viewModel: CoworkerViewModel,
@@ -94,12 +100,15 @@ fun SwarmWorkspaceScreen(
 ) {
     val swarms by viewModel.swarms.collectAsState()
     val bots by viewModel.bots.collectAsState()
+    val tasks by viewModel.tasks.collectAsState()
     val selectedSwarmId by viewModel.selectedSwarmId.collectAsState()
     val messages by viewModel.currentSwarmMessages.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
 
     val currentSwarm = swarms.find { it.id == selectedSwarmId } ?: swarms.firstOrNull()
 
     var showCreateSwarmDialog by remember { mutableStateOf(false) }
+    var currentTab by remember { mutableStateOf("Dashboard") }
     var userMessageText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
@@ -159,29 +168,48 @@ fun SwarmWorkspaceScreen(
                     }
                 }
 
-                Button(
-                    onClick = { showCreateSwarmDialog = true },
-                    shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = ImmersiveContainer,
-                        contentColor = ImmersivePrimary
-                    ),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.testTag("create_swarm_button")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "New Swarm",
-                        tint = ImmersivePrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "New Swarm",
-                        color = ImmersivePrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    IconButton(
+                        onClick = { viewModel.refreshSwarmStatus() },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("refresh_swarm_header_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Refresh Swarm",
+                            tint = if (isRefreshing) ImmersivePrimary else ImmersiveTextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    Button(
+                        onClick = { showCreateSwarmDialog = true },
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ImmersiveContainer,
+                            contentColor = ImmersivePrimary
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("create_swarm_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "New Swarm",
+                            tint = ImmersivePrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "New Swarm",
+                            color = ImmersivePrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
@@ -218,21 +246,65 @@ fun SwarmWorkspaceScreen(
                     }
                 }
             }
+            // Tabs
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                listOf("Dashboard", "Terminal").forEach { tab ->
+                    val isSelected = currentTab == tab
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable { currentTab = tab }
+                    ) {
+                        Text(
+                            text = tab,
+                            fontSize = 14.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) ImmersivePrimary else ImmersiveTextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        if (isSelected) {
+                            Box(
+                                modifier = Modifier
+                                    .height(2.dp)
+                                    .width(32.dp)
+                                    .background(ImmersivePrimary, RoundedCornerShape(50))
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.height(2.dp))
+                        }
+                    }
+                }
+            }
         }
 
         // Shared Workspace Telemetry Bar
         if (currentSwarm != null) {
             val assignedBotIds = currentSwarm.botIds.split(",").map { it.trim() }
             val swarmBots = bots.filter { assignedBotIds.contains(it.id) }
+            val swarmTasks = tasks.filter { it.swarmId == currentSwarm.id }
 
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = ImmersiveContainer,
-                border = BorderStroke(1.dp, ImmersiveBorder.copy(alpha = 0.5f))
-            ) {
+            if (currentTab == "Dashboard") {
+                SwarmResourceDashboard(
+                    swarm = currentSwarm,
+                    bots = swarmBots,
+                    tasks = swarmTasks,
+                    isRefreshing = isRefreshing,
+                    onRefresh = { viewModel.refreshSwarmStatus() },
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = ImmersiveContainer,
+                    border = BorderStroke(1.dp, ImmersiveBorder.copy(alpha = 0.5f))
+                ) {
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -298,71 +370,89 @@ fun SwarmWorkspaceScreen(
                         maxLines = 1
                     )
                 }
-            }
-        }
+            } // Close Surface
 
-        // Chat Stream: Collaborative Swarm History
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            items(messages) { msg ->
-                val senderBot = bots.find { it.id == msg.senderId }
-                SwarmMessageBubble(message = msg, senderBot = senderBot)
-            }
-        }
-
-        // Input field for Commander instructions
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = ImmersiveSurface,
-            border = BorderStroke(1.dp, ImmersiveBorder.copy(alpha = 0.5f))
-        ) {
-            Row(
+            // Chat Stream: Collaborative Swarm History
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = { viewModel.refreshSwarmStatus() },
                 modifier = Modifier
+                    .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = userMessageText,
-                    onValueChange = { userMessageText = it },
-                    placeholder = { Text("Issue command to swarm...", color = ImmersiveTextMuted) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("swarm_message_input"),
-                    shape = RoundedCornerShape(50),
-                    maxLines = 3
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                IconButton(
-                    onClick = {
-                        if (userMessageText.isNotBlank() && currentSwarm != null) {
-                            viewModel.sendSwarmMessage(currentSwarm.id, userMessageText)
-                            userMessageText = ""
-                        }
-                    },
-                    enabled = userMessageText.isNotBlank() && currentSwarm != null,
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .background(if (userMessageText.isNotBlank()) ImmersivePrimary else ImmersiveContainer)
-                        .testTag("send_swarm_message_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Send,
-                        contentDescription = "Send",
-                        tint = if (userMessageText.isNotBlank()) ImmersiveOnPrimary else ImmersiveTextMuted
+                    .testTag("swarm_chat_pull_to_refresh"),
+                indicator = {
+                    PullToRefreshDefaults.Indicator(
+                        state = rememberPullToRefreshState(),
+                        isRefreshing = isRefreshing,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                        containerColor = ImmersiveSurface,
+                        color = ImmersivePrimary
                     )
                 }
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    contentPadding = PaddingValues(vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(messages) { msg ->
+                        val senderBot = bots.find { it.id == msg.senderId }
+                        SwarmMessageBubble(message = msg, senderBot = senderBot)
+                    }
+                }
             }
-        }
-    }
+
+            // Input field for Commander instructions
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = ImmersiveSurface,
+                border = BorderStroke(1.dp, ImmersiveBorder.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = userMessageText,
+                        onValueChange = { userMessageText = it },
+                        placeholder = { Text("Issue command to swarm...", color = ImmersiveTextMuted) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("swarm_message_input"),
+                        shape = RoundedCornerShape(50),
+                        maxLines = 3
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            if (userMessageText.isNotBlank() && currentSwarm != null) {
+                                viewModel.sendSwarmMessage(currentSwarm.id, userMessageText)
+                                userMessageText = ""
+                            }
+                        },
+                        enabled = userMessageText.isNotBlank() && currentSwarm != null,
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(if (userMessageText.isNotBlank()) ImmersivePrimary else ImmersiveContainer)
+                            .testTag("send_swarm_message_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Send",
+                            tint = if (userMessageText.isNotBlank()) ImmersiveOnPrimary else ImmersiveTextMuted
+                        )
+                    }
+                }
+            }
+        } // Close else
+        } // Close if (currentSwarm != null)
+    } // Close main Column
 
     // Dialog for Creating a new Multi-Bot Swarm (2 to 6 bots)
     if (showCreateSwarmDialog) {

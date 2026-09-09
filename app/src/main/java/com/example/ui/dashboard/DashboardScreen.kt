@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CheckCircle
@@ -35,7 +36,13 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Schema
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.material3.Divider
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Warning
@@ -101,6 +108,7 @@ import com.example.ui.theme.ImmersiveBorder
 import com.example.ui.theme.ImmersiveContainer
 import com.example.ui.theme.ImmersiveOnPrimary
 import com.example.ui.theme.ImmersivePrimary
+import com.example.ui.theme.ImmersivePrimaryContainer
 import com.example.ui.theme.ImmersiveSurface
 import com.example.ui.theme.ImmersiveSurfaceVariant
 import com.example.ui.theme.ImmersiveTextMuted
@@ -120,15 +128,20 @@ fun DashboardScreen(
     viewModel: CoworkerViewModel,
     onNavigateToApprovals: () -> Unit,
     onNavigateToSwarms: (Long) -> Unit,
+    onNavigateToSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val bots by viewModel.bots.collectAsState()
     val tasks by viewModel.tasks.collectAsState()
     val pendingApprovals by viewModel.pendingApprovals.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
 
     var showDispatchDialog by remember { mutableStateOf(false) }
+    var showArchitectureDialog by remember { mutableStateOf(false) }
+    var showPlannerDialog by remember { mutableStateOf(false) }
     var selectedBotForDetail by remember { mutableStateOf<BotEntity?>(null) }
     var selectedBotForLogs by remember { mutableStateOf<BotEntity?>(null) }
+    var taskForHandoff by remember { mutableStateOf<TaskEntity?>(null) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -152,14 +165,31 @@ fun DashboardScreen(
             }
         }
     ) { innerPadding ->
-        LazyColumn(
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = { viewModel.refreshSwarmStatus() },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = PaddingValues(top = 12.dp, bottom = 88.dp)
+                .testTag("agent_list_pull_to_refresh"),
+            indicator = {
+                PullToRefreshDefaults.Indicator(
+                    state = rememberPullToRefreshState(),
+                    isRefreshing = isRefreshing,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    containerColor = ImmersiveSurface,
+                    color = ImmersivePrimary
+                )
+            }
         ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp)
+                    .testTag("agent_list_lazy_column"),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(top = 12.dp, bottom = 88.dp)
+            ) {
             // Header: Command Center with Active Badge and Profile Icon (Matching Immersive UI HTML)
             item {
                 Row(
@@ -216,21 +246,40 @@ fun DashboardScreen(
                         }
                     }
 
-                    // Account Circle Button
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(ImmersiveSurface)
-                            .border(1.dp, ImmersiveBorder, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AccountCircle,
-                            contentDescription = "Account",
-                            tint = ImmersiveTextSecondary,
-                            modifier = Modifier.size(22.dp)
-                        )
+                    // Account Circle & Architecture Button
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(ImmersiveSurface)
+                                .border(1.dp, ImmersiveBorder, CircleShape)
+                                .clickable { showArchitectureDialog = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Schema,
+                                contentDescription = "System Architecture",
+                                tint = ImmersivePrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(ImmersiveSurface)
+                                .border(1.dp, ImmersiveBorder, CircleShape)
+                                .clickable { onNavigateToSettings() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccountCircle,
+                                contentDescription = "Settings & Integrations",
+                                tint = ImmersiveTextSecondary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -241,6 +290,58 @@ fun DashboardScreen(
                     activeVmCount = 6,
                     runningBotsCount = bots.count { it.status == "WORKING" }
                 )
+            }
+
+            // Task Planner / Goal Orchestrator Card
+            item {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = ImmersiveSurface,
+                    border = BorderStroke(1.dp, ImmersiveBorder.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showPlannerDialog = true }
+                        .testTag("task_planner_card")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(ImmersivePrimaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "Task Planner",
+                                tint = ImmersivePrimary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Task Planner",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = ImmersiveTextPrimary
+                            )
+                            Text(
+                                text = "Define a goal & auto-orchestrate sub-tasks",
+                                fontSize = 12.sp,
+                                color = ImmersiveTextSecondary
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Open Planner",
+                            tint = ImmersivePrimary
+                        )
+                    }
+                }
             }
 
             // Approval Required Banner (Matching Immersive UI HTML banner)
@@ -323,17 +424,45 @@ fun DashboardScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "AI Workforce by Role",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "${bots.size} Specialists",
-                        fontSize = 12.sp,
-                        color = CyanPrimary
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "AI Workforce by Role",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        IconButton(
+                            onClick = { viewModel.refreshSwarmStatus() },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("refresh_swarm_status_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Refresh Swarm Status",
+                                tint = if (isRefreshing) ImmersivePrimary else ImmersiveTextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = if (isRefreshing) "Syncing..." else "Pull down to refresh",
+                            fontSize = 11.sp,
+                            color = if (isRefreshing) ImmersivePrimary else ImmersiveTextMuted
+                        )
+                        Text(
+                            text = "• ${bots.size} Specialists",
+                            fontSize = 12.sp,
+                            color = CyanPrimary
+                        )
+                    }
                 }
             }
 
@@ -411,11 +540,45 @@ fun DashboardScreen(
                         onReviewApproval = { onNavigateToApprovals() },
                         onViewAgentLogs = {
                             primaryBot?.let { selectedBotForLogs = it }
+                        },
+                        onHandoffTask = {
+                            taskForHandoff = task
                         }
                     )
                 }
             }
-        }
+        } // LazyColumn
+        } // PullToRefreshBox
+    }
+
+    // Task Handoff Modal
+    taskForHandoff?.let { task ->
+        TaskHandoffDialog(
+            task = task,
+            bots = bots,
+            onDismiss = { taskForHandoff = null },
+            onConfirmHandoff = { targetBotId, note ->
+                viewModel.handoffTask(task.id, targetBotId, note)
+                taskForHandoff = null
+            }
+        )
+    }
+
+    if (showArchitectureDialog) {
+        SystemArchitectureDialog(
+            onDismiss = { showArchitectureDialog = false }
+        )
+    }
+
+    if (showPlannerDialog) {
+        com.example.ui.planner.TaskPlannerDialog(geminiApiService = viewModel.geminiApiService,
+            bots = bots,
+            onDismiss = { showPlannerDialog = false },
+            onDispatchPlan = { goal, generatedPlan ->
+                viewModel.dispatchTaskPlan(goal, generatedPlan)
+                showPlannerDialog = false
+            }
+        )
     }
 
     // Dialog for Assigning Tasks via Text
@@ -554,11 +717,90 @@ fun BotMiniCard(
 }
 
 @Composable
+fun CognitiveLoopTracker(bot: BotEntity?) {
+    val states = listOf("Observe", "Orient", "Decide", "Act")
+    val activeIndex = when (bot?.activityState) {
+        BotActivityState.RESEARCHING -> 0 // Observe
+        BotActivityState.ANALYZING -> 1 // Orient
+        BotActivityState.DRAFTING -> 2 // Decide
+        BotActivityState.WAITING_FOR_INPUT -> 2 // Decide (Intercept)
+        BotActivityState.COMPLETED -> 4 // Done
+        else -> 3 // Act/Running
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "Cognitive Execution Loop",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = ImmersiveTextMuted,
+            letterSpacing = 0.5.sp
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            states.forEachIndexed { index, title ->
+                val isActive = index == activeIndex
+                val isPast = index < activeIndex
+                
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(
+                                when {
+                                    isActive -> ImmersivePrimary
+                                    isPast -> ImmersiveActiveMint
+                                    else -> Color(0xFF2B2930)
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isPast) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Done",
+                                tint = Color.Black,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        } else if (isActive) {
+                            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.Black))
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = title,
+                        fontSize = 10.sp,
+                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isActive || isPast) ImmersiveTextPrimary else ImmersiveTextMuted
+                    )
+                }
+
+                if (index < states.size - 1) {
+                    Divider(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 4.dp),
+                        color = if (isPast) ImmersiveActiveMint else Color(0xFF2B2930),
+                        thickness = 1.dp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun TaskCommandCard(
     task: TaskEntity,
     bot: BotEntity?,
     onReviewApproval: () -> Unit,
     onViewAgentLogs: (() -> Unit)? = null,
+    onHandoffTask: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -612,6 +854,35 @@ fun TaskCommandCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    if (task.priority == "Urgent") {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = ImmersiveAlertCoral.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, ImmersiveAlertCoral.copy(alpha = 0.5f))
+                        ) {
+                            Text(
+                                text = "Urgent",
+                                color = ImmersiveAlertCoral,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    } else if (task.priority == "High") {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = Color(0xFFFFB300).copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, Color(0xFFFFB300).copy(alpha = 0.5f))
+                        ) {
+                            Text(
+                                text = "High",
+                                color = Color(0xFFFFB300),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                     if (bot != null) {
                         BotActivityBadge(activityState = bot.activityState)
                     }
@@ -668,6 +939,10 @@ fun TaskCommandCard(
             )
 
             Spacer(modifier = Modifier.height(14.dp))
+            
+            CognitiveLoopTracker(bot = bot)
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Live Computer-Use Visual Screen Window
             VisualBrowserWindow(
@@ -682,27 +957,47 @@ fun TaskCommandCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (onViewAgentLogs != null) {
-                    TextButton(
-                        onClick = onViewAgentLogs,
-                        modifier = Modifier.testTag("task_inspect_logs_${task.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Terminal,
-                            contentDescription = "Agent Logs",
-                            tint = ImmersivePrimary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Agent Logs & Trace",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = ImmersivePrimary
-                        )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onViewAgentLogs != null) {
+                        TextButton(
+                            onClick = onViewAgentLogs,
+                            modifier = Modifier.testTag("task_inspect_logs_${task.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Terminal,
+                                contentDescription = "Agent Logs",
+                                tint = ImmersivePrimary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Logs",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = ImmersivePrimary
+                            )
+                        }
                     }
-                } else {
-                    Spacer(modifier = Modifier.width(1.dp))
+                    if (onHandoffTask != null && task.status == TaskStatus.RUNNING) {
+                        TextButton(
+                            onClick = onHandoffTask,
+                            modifier = Modifier.testTag("task_handoff_${task.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Send,
+                                contentDescription = "Handoff",
+                                tint = ImmersivePrimary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Handoff",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = ImmersivePrimary
+                            )
+                        }
+                    }
                 }
 
                 Text(
@@ -1032,3 +1327,249 @@ fun BotDetailDialog(
         }
     )
 }
+
+@Composable
+fun TaskHandoffDialog(
+    task: TaskEntity,
+    bots: List<BotEntity>,
+    onDismiss: () -> Unit,
+    onConfirmHandoff: (targetBotId: String, note: String) -> Unit
+) {
+    var selectedBotId by remember { mutableStateOf<String?>(null) }
+    var handoffNote by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = ImmersiveSurface,
+        shape = RoundedCornerShape(28.dp),
+        title = {
+            Text(
+                text = "Handoff Task",
+                fontWeight = FontWeight.Bold,
+                color = ImmersiveTextPrimary
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Transfer task context to another specialized bot.",
+                    fontSize = 12.sp,
+                    color = ImmersiveTextSecondary
+                )
+                
+                Text(
+                    text = "Select Target Agent:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ImmersiveTextPrimary
+                )
+
+                LazyColumn(modifier = Modifier.height(160.dp)) {
+                    items(bots.filter { it.id != task.primaryBotId }) { bot ->
+                        val isSelected = bot.id == selectedBotId
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isSelected) ImmersivePrimaryContainer else Color.Transparent)
+                                .clickable { selectedBotId = bot.id }
+                                .padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            BotAvatar(
+                                botName = bot.name,
+                                role = bot.role,
+                                size = 32,
+                                colorHex = bot.colorHex,
+                                showStatusDot = false
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = bot.name,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) ImmersivePrimary else ImmersiveTextPrimary
+                                )
+                                Text(
+                                    text = bot.role.title,
+                                    fontSize = 11.sp,
+                                    color = ImmersiveTextSecondary
+                                )
+                            }
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = handoffNote,
+                    onValueChange = { handoffNote = it },
+                    label = { Text("Handoff Note / Context") },
+                    placeholder = { Text("e.g. Please verify the attached PDF") },
+                    modifier = Modifier.fillMaxWidth().testTag("handoff_note_input"),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    selectedBotId?.let { botId ->
+                        onConfirmHandoff(botId, handoffNote)
+                    }
+                },
+                enabled = selectedBotId != null,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = ImmersivePrimary,
+                    contentColor = ImmersiveOnPrimary
+                ),
+                modifier = Modifier.testTag("submit_handoff_button")
+            ) {
+                Text("Confirm Handoff", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = ImmersiveTextMuted)
+            }
+        }
+    )
+}
+
+@Composable
+fun SystemArchitectureDialog(
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = ImmersiveSurface,
+        shape = RoundedCornerShape(24.dp),
+        title = {
+            Text(
+                text = "Platform Architecture",
+                fontWeight = FontWeight.Bold,
+                color = ImmersiveTextPrimary
+            )
+        },
+        text = {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                item {
+                    Text(
+                        text = "The AI Coworkers platform operates across three distinct layers. This Android application serves solely as a thin client for dispatch and approvals.",
+                        fontSize = 12.sp,
+                        color = ImmersiveTextSecondary,
+                        lineHeight = 16.sp
+                    )
+                }
+
+                // Layer 1: Mobile Client
+                item {
+                    ArchitectureLayerCard(
+                        title = "1. Android Mobile Client",
+                        subtitle = "Thin Client: Dispatch, Logs, Approvals",
+                        description = "Maintains a WebSocket/FCM connection to the orchestration gateway.",
+                        color = CyanPrimary
+                    )
+                    
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = "Connection",
+                            tint = ImmersiveTextMuted,
+                            modifier = Modifier.size(20.dp).padding(vertical = 4.dp)
+                        )
+                    }
+                }
+
+                // Layer 2: Orchestration Gateway
+                item {
+                    ArchitectureLayerCard(
+                        title = "2. Orchestration & Gateway",
+                        subtitle = "Task Planner, Inter-Bot Bus, Guardrails",
+                        description = "Runs the 'Observe → Orient → Decide → Act' loop. Analyzes DOM and pushes High-Risk intercepts to the mobile client.",
+                        color = EmeraldAccent
+                    )
+                    
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = "Connection",
+                            tint = ImmersiveTextMuted,
+                            modifier = Modifier.size(20.dp).padding(vertical = 4.dp)
+                        )
+                    }
+                }
+
+                // Layer 3: Cloud Sandbox
+                item {
+                    ArchitectureLayerCard(
+                        title = "3. Persistent Cloud Sandbox",
+                        subtitle = "Dedicated VMs (One per Bot)",
+                        description = "Headless Chromium, virtual framebuffer, encrypted session vault, and shell access for direct tool use.",
+                        color = ImmersivePrimary
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = ImmersivePrimary,
+                    contentColor = ImmersiveOnPrimary
+                )
+            ) {
+                Text("Close", fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+@Composable
+fun ArchitectureLayerCard(
+    title: String,
+    subtitle: String,
+    description: String,
+    color: Color
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF141218),
+        border = BorderStroke(1.dp, ImmersiveBorder.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(8.dp).clip(CircleShape).background(color)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = title,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = ImmersiveTextPrimary
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = subtitle,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = color
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = description,
+                fontSize = 11.sp,
+                color = ImmersiveTextSecondary,
+                lineHeight = 15.sp
+            )
+        }
+    }
+}
+

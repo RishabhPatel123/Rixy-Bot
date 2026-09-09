@@ -30,6 +30,12 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.TextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -58,6 +64,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.SkillEntity
+import com.example.service.SkillRecorderService
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.runtime.LaunchedEffect
 import com.example.ui.theme.CrimsonAlert
 import com.example.ui.theme.CyanPrimary
 import com.example.ui.theme.DarkBorder
@@ -93,6 +102,7 @@ fun TeachTaskScreen(
     var recordingToolName by remember { mutableStateOf("") }
     var recordingSkillTitle by remember { mutableStateOf("") }
     var recordingDescription by remember { mutableStateOf("") }
+    var recordingInputParams by remember { mutableStateOf("") }
     val capturedSteps = remember { mutableStateListOf<String>() }
     var showStartRecordDialog by remember { mutableStateOf(false) }
 
@@ -131,14 +141,14 @@ fun TeachTaskScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "TEACH A TASK",
+                            text = "SKILL LIBRARY",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = ImmersivePrimary,
                             letterSpacing = 1.sp
                         )
                         Text(
-                            text = "Visual Screen Recording & Skills",
+                            text = "Saved Automation Traces",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = ImmersiveTextPrimary
@@ -286,15 +296,29 @@ fun TeachTaskScreen(
 
                         Button(
                             onClick = {
-                                val stepsText = capturedSteps.joinToString("\n")
+                                val recorder = SkillRecorderService.getInstance()
+                                val systemTraceJson = recorder?.stopRecording()
+
+                                val stepsText = systemTraceJson ?: capturedSteps.joinToString("\n")
+                                val paramsJson = if (recordingInputParams.isNotBlank()) {
+                                    val parts = recordingInputParams.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                                    "[" + parts.joinToString(", ") { "\"$it\"" } + "]"
+                                } else {
+                                    "[]"
+                                }
                                 viewModel.recordNewSkill(
                                     recordingSkillTitle,
                                     recordingToolName,
                                     recordingDescription,
-                                    stepsText
+                                    stepsText,
+                                    paramsJson
                                 )
                                 isRecordingActive = false
                                 capturedSteps.clear()
+                                recordingSkillTitle = ""
+                                recordingToolName = ""
+                                recordingDescription = ""
+                                recordingInputParams = ""
                             },
                             shape = RoundedCornerShape(50),
                             colors = ButtonDefaults.buttonColors(
@@ -342,7 +366,7 @@ fun TeachTaskScreen(
             }
 
             items(skills) { skill ->
-                SkillCard(skill = skill)
+                SkillCard(skill = skill, viewModel = viewModel)
             }
         }
     }
@@ -394,6 +418,15 @@ fun TeachTaskScreen(
                         modifier = Modifier.fillMaxWidth().testTag("skill_desc_input"),
                         maxLines = 2
                     )
+
+                    OutlinedTextField(
+                        value = recordingInputParams,
+                        onValueChange = { recordingInputParams = it },
+                        label = { Text("Input Parameters (Comma Separated)") },
+                        placeholder = { Text("e.g. account_id, target_date") },
+                        modifier = Modifier.fillMaxWidth().testTag("skill_params_input"),
+                        singleLine = true
+                    )
                 }
             },
             confirmButton = {
@@ -403,6 +436,7 @@ fun TeachTaskScreen(
                         capturedSteps.clear()
                         capturedSteps.add("1. Launch browser to $recordingToolName")
                         capturedSteps.add("2. Focus primary workspace iframe")
+                        SkillRecorderService.getInstance()?.startRecording(recordingToolName)
                         showStartRecordDialog = false
                     },
                     enabled = recordingSkillTitle.isNotBlank() && recordingToolName.isNotBlank(),
@@ -435,15 +469,20 @@ fun TeachTaskScreen(
 @Composable
 fun SkillCard(
     skill: SkillEntity,
+    viewModel: CoworkerViewModel,
     modifier: Modifier = Modifier
 ) {
+    var showRunDialog by remember { mutableStateOf(false) }
+    var showParamsDialog by remember { mutableStateOf(false) }
+    var editedParams by remember { mutableStateOf(skill.inputParametersSchema) }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .testTag("skill_card_${skill.id}"),
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = ImmersiveSurface),
-        border = BorderStroke(1.dp, ImmersiveBorder.copy(alpha = 0.5f))
+        colors = CardDefaults.cardColors(containerColor = if (skill.isEnabled) ImmersiveSurface else ImmersiveSurface.copy(alpha = 0.5f)),
+        border = BorderStroke(1.dp, ImmersiveBorder.copy(alpha = if (skill.isEnabled) 0.5f else 0.2f))
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Row(
@@ -457,16 +496,31 @@ fun SkillCard(
                     fontWeight = FontWeight.Bold,
                     color = ImmersivePrimary
                 )
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = Color(0xFF2B2930)
-                ) {
-                    Text(
-                        text = "Executed ${skill.timesExecuted} times",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = ImmersiveTextMuted,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = Color(0xFF2B2930)
+                    ) {
+                        Text(
+                            text = "Executed ${skill.timesExecuted} times",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = ImmersiveTextMuted,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = skill.isEnabled,
+                        onCheckedChange = {
+                            viewModel.updateSkill(skill.copy(isEnabled = it))
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = ImmersiveSurface,
+                            checkedTrackColor = ImmersivePrimary,
+                            uncheckedThumbColor = ImmersiveTextMuted,
+                            uncheckedTrackColor = ImmersiveContainer
+                        )
                     )
                 }
             }
@@ -513,8 +567,188 @@ fun SkillCard(
                         color = Color(0xFFCAC4D0),
                         lineHeight = 15.sp
                     )
+                    
+                    if (skill.inputParametersSchema != "[]" && skill.inputParametersSchema.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "REQUIRED PARAMETERS: ${skill.inputParametersSchema}",
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = ImmersivePrimary
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(
+                    onClick = { viewModel.deleteSkill(skill) },
+                    modifier = Modifier.size(48.dp).background(ImmersiveContainer, CircleShape)
+                ) {
+                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = ImmersiveAlertCoral)
+                }
+                IconButton(
+                    onClick = { showParamsDialog = true },
+                    modifier = Modifier.size(48.dp).background(ImmersiveContainer, CircleShape)
+                ) {
+                    Icon(imageVector = Icons.Default.Edit, contentDescription = "Parameterize", tint = ImmersivePrimary)
+                }
+                Button(
+                    onClick = { showRunDialog = true },
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = RoundedCornerShape(50),
+                    enabled = skill.isEnabled,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ImmersivePrimary,
+                        contentColor = ImmersiveOnPrimary
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Run Skill",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Deploy Skill", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             }
         }
     }
+
+    if (showParamsDialog) {
+        AlertDialog(
+            onDismissRequest = { showParamsDialog = false },
+            containerColor = ImmersiveSurface,
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Text("Parameterize Skill", fontWeight = FontWeight.Bold, color = ImmersiveTextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Edit the required input schema (e.g. ['account_id', 'target_date']):",
+                        fontSize = 12.sp,
+                        color = ImmersiveTextSecondary
+                    )
+                    OutlinedTextField(
+                        value = editedParams,
+                        onValueChange = { editedParams = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.updateSkill(skill.copy(inputParametersSchema = editedParams))
+                        showParamsDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ImmersivePrimary)
+                ) {
+                    Text("Save Parameters")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showParamsDialog = false }) {
+                    Text("Cancel", color = ImmersiveTextMuted)
+                }
+            }
+        )
+    }
+
+    if (showRunDialog) {
+        RunSkillDialog(
+            skill = skill,
+            onDismiss = { showRunDialog = false },
+            onRun = { parameters ->
+                // Increment executed times (or run actual task logic here)
+                viewModel.updateSkill(skill.copy(timesExecuted = skill.timesExecuted + 1))
+                showRunDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+fun RunSkillDialog(
+    skill: SkillEntity,
+    onDismiss: () -> Unit,
+    onRun: (Map<String, String>) -> Unit
+) {
+    val variables = remember(skill.recordedStepsJson, skill.inputParametersSchema) {
+        val extracted = mutableSetOf<String>()
+        val regex = Regex("\\$\\{([^}]+)\\}")
+        regex.findAll(skill.recordedStepsJson).forEach { matchResult ->
+            extracted.add(matchResult.groupValues[1])
+        }
+        
+        try {
+            val jsonArray = org.json.JSONArray(skill.inputParametersSchema)
+            for (i in 0 until jsonArray.length()) {
+                val param = jsonArray.optString(i)
+                if (param.isNotEmpty()) extracted.add(param)
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+        extracted.toList()
+    }
+
+    val paramValues = remember { 
+        androidx.compose.runtime.mutableStateMapOf<String, String>().apply {
+            variables.forEach { put(it, "") }
+        } 
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = ImmersiveSurface,
+        shape = RoundedCornerShape(24.dp),
+        title = {
+            Text("Deploy Skill", fontWeight = FontWeight.Bold, color = ImmersiveTextPrimary)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (variables.isEmpty()) {
+                    Text("No parameters required for this skill. It will run with static recorded steps.", fontSize = 12.sp, color = ImmersiveTextSecondary)
+                } else {
+                    Text("Please provide values for the following parameters before execution:", fontSize = 12.sp, color = ImmersiveTextSecondary)
+                    variables.forEach { variable ->
+                        OutlinedTextField(
+                            value = paramValues[variable] ?: "",
+                            onValueChange = { paramValues[variable] = it },
+                            label = { Text(variable) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = ImmersivePrimary,
+                                unfocusedBorderColor = ImmersiveBorder,
+                                focusedContainerColor = DarkSurfaceVariant,
+                                unfocusedContainerColor = DarkSurfaceVariant
+                            )
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onRun(paramValues) },
+                colors = ButtonDefaults.buttonColors(containerColor = ImmersivePrimary)
+            ) {
+                Text("Execute")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = ImmersiveTextMuted)
+            }
+        }
+    )
 }

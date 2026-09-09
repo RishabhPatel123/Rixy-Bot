@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">AI Coworkers</string>
+    <string name="accessibility_service_description">Records screen interactions to synthesize automated macro skills for your AI Coworker.</string>
 </resources>

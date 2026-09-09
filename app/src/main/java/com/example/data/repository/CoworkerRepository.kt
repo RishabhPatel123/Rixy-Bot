@@ -102,12 +102,80 @@ class CoworkerRepository(private val dao: CoworkerDao) {
         dao.insertSkill(skill)
     }
 
+    suspend fun updateSkill(skill: SkillEntity) = withContext(Dispatchers.IO) {
+        dao.updateSkill(skill)
+    }
+
+    suspend fun deleteSkill(skill: SkillEntity) = withContext(Dispatchers.IO) {
+        dao.deleteSkill(skill)
+    }
+
     suspend fun toggleRoutine(routine: RoutineEntity) = withContext(Dispatchers.IO) {
         dao.updateRoutine(routine.copy(isEnabled = !routine.isEnabled))
     }
 
     suspend fun updateMcpServer(server: McpServerEntity) = withContext(Dispatchers.IO) {
         dao.updateMcpServer(server)
+    }
+
+    suspend fun refreshSwarmAndBots() = withContext(Dispatchers.IO) {
+        val currentBots = dao.getAllBots().firstOrNull() ?: return@withContext
+        val runningTasksList = dao.getRunningTasks().firstOrNull() ?: emptyList()
+
+        val updatedBots = currentBots.map { bot ->
+            val activeTask = runningTasksList.find { it.primaryBotId == bot.id }
+            val (status, activityState, actionText) = if (activeTask != null) {
+                Triple(
+                    "WORKING",
+                    when ((1..3).random()) {
+                        1 -> BotActivityState.RESEARCHING
+                        2 -> BotActivityState.ANALYZING
+                        else -> BotActivityState.DRAFTING
+                    },
+                    "Processing task: ${activeTask.title}"
+                )
+            } else {
+                when (bot.status) {
+                    "WORKING" -> Triple(
+                        "WORKING",
+                        when ((1..3).random()) {
+                            1 -> BotActivityState.RESEARCHING
+                            2 -> BotActivityState.DRAFTING
+                            else -> BotActivityState.ANALYZING
+                        },
+                        bot.currentActionText
+                    )
+                    "PARKED" -> Triple(
+                        "PARKED",
+                        BotActivityState.WAITING_FOR_INPUT,
+                        bot.currentActionText
+                    )
+                    else -> Triple(
+                        "IDLE",
+                        BotActivityState.IDLE,
+                        "Standing by in persistent VM"
+                    )
+                }
+            }
+
+            val cpu = (12..48).random()
+            val mem = (15 + (1..20).random()).toDouble() / 10.0
+
+            bot.copy(
+                status = status,
+                activityState = activityState,
+                currentActionText = actionText,
+                cpuUsage = "$cpu%",
+                memoryUsage = "${mem} GB"
+            )
+        }
+        dao.insertBots(updatedBots)
+
+        // Also touch / update active swarms
+        val swarms = dao.getAllSwarms().firstOrNull() ?: emptyList()
+        swarms.forEach { swarm ->
+            dao.updateSwarm(swarm.copy(isRunning = true))
+        }
     }
 
     suspend fun seedInitialDataIfNeeded() = withContext(Dispatchers.IO) {
@@ -484,21 +552,28 @@ class CoworkerRepository(private val dao: CoworkerDao) {
                     description = "Provides contacts, deals, company lookup, and draft email endpoints."
                 ),
                 McpServerEntity(
-                    serverName = "PostgreSQL Warehouse MCP",
-                    protocolUrl = "mcp://postgres-prod.data.internal",
-                    status = "CONNECTED",
-                    toolsCount = 18,
-                    description = "Read-only access to customer analytics, subscriptions, and usage logs."
-                ),
-                McpServerEntity(
-                    serverName = "GitHub Enterprise Terminal MCP",
+                    serverName = "GitHub Enterprise MCP",
                     protocolUrl = "mcp://github.internal",
                     status = "CONNECTED",
                     toolsCount = 15,
-                    description = "Branch creation, issue tracking, CI run status, and git commit visualizer."
+                    description = "Branch creation, issue tracking, CI run status, and PR management."
                 ),
                 McpServerEntity(
-                    serverName = "Stripe Financial MCP Plugin",
+                    serverName = "Slack Workspace MCP",
+                    protocolUrl = "mcp://slack.internal",
+                    status = "CONNECTED",
+                    toolsCount = 8,
+                    description = "Send messages, read channels, manage user groups, and trigger alerts."
+                ),
+                McpServerEntity(
+                    serverName = "AWS Infrastructure MCP",
+                    protocolUrl = "mcp://aws-cloud.internal",
+                    status = "DISCONNECTED",
+                    toolsCount = 24,
+                    description = "S3 bucket management, EC2 instances, CloudWatch logs, and billing APIs."
+                ),
+                McpServerEntity(
+                    serverName = "Stripe Financial MCP",
                     protocolUrl = "mcp://stripe.plugin.internal",
                     status = "CONNECTED",
                     toolsCount = 9,

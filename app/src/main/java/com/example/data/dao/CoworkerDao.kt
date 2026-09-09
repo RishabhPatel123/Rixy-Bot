@@ -90,6 +90,9 @@ interface CoworkerDao {
     @Update
     suspend fun updateSkill(skill: SkillEntity)
 
+    @androidx.room.Delete
+    suspend fun deleteSkill(skill: SkillEntity)
+
     // Routines
     @Query("SELECT * FROM routines ORDER BY id DESC")
     fun getAllRoutines(): Flow<List<RoutineEntity>>

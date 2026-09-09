@@ -112,6 +112,7 @@ data class TaskEntity(
     val vmNode: String = "cloud-vm-east-4",
     val browserUrl: String = "https://app.vendorportal.com",
     val isHumanApprovalNeeded: Boolean = false,
+    val priority: String = "Normal",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -142,7 +143,9 @@ data class SkillEntity(
     val targetAppOrTool: String,
     val description: String,
     val recordedStepsJson: String, // Step by step recorded visual actions
+    val inputParametersSchema: String = "[]", // e.g. [{"name": "account_id", "type": "string"}, ...]
     val timesExecuted: Int = 0,
+    val isEnabled: Boolean = true,
     val lastRecordedAt: Long = System.currentTimeMillis()
 )
 
