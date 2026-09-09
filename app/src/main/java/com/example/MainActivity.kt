@@ -16,6 +16,7 @@ import androidx.work.WorkManager
 import com.example.ui.MainScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.worker.SyncWorker
+import org.koin.androidx.compose.KoinAndroidContext
 import java.util.concurrent.TimeUnit
 
 
@@ -27,9 +28,11 @@ class MainActivity : ComponentActivity() {
         setupBackgroundSync()
         
         setContent {
-            MyApplicationTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    MainScreen()
+            KoinAndroidContext {
+                MyApplicationTheme {
+                    Surface(modifier = Modifier.fillMaxSize()) {
+                        MainScreen()
+                    }
                 }
             }
         }
