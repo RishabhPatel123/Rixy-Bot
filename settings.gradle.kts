@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "AI Coworkers"
+rootProject.name = "Rixy"
 
 include(":app")

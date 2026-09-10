@@ -1,123 +1,94 @@
-# Rixy-Bot — AI Coworkers
+# Rixy
 
-A mobile command center for persistent multi-agent **AI coworker swarms** executing complex computer-use workflows on shared cloud VMs — right from your Android device.
+A Grok-style, chat-first Android assistant powered by Google Gemini. Bring your own API key — your conversations stay on your phone and are sent only to Gemini.
 
-AI Coworkers simulates a virtual workforce of specialist AI bots — led by a Company Manager named **Orion** — that research, draft, sell, audit, and operate inside cloud-VM workspaces. Dispatch tasks or multi-phase initiatives, watch live execution progress, chat with your bots, and stay in control through a human-in-the-loop approval queue before bots send emails, spend money, or pass 2FA checks.
-
-> **Note:** Task execution is currently **simulated on-device**. With a Gemini API key configured, real AI powers task planning and swarm chat responses; everything runs in a fully functional offline-simulation mode without any keys.
+Rixy streams replies in real time, renders markdown (bold, lists, fenced code blocks with copy buttons), and includes a **Plan mode** that decomposes any goal into prioritized, actionable tasks you can save to a built-in task list.
 
 ## ✨ Features
 
-- **Command Center dashboard** — live agent status, VM cluster health, task progress tracking, per-bot execution logs, and a cognitive-loop status tracker.
-- **Task dispatch & AI planning** — assign tasks directly to a bot, or let Gemini auto-decompose a high-level goal into prioritized sub-tasks and route them ("Auto Orchestrate").
-- **Company Manager hub** — complex-initiative decomposition into phased roadmaps, rule-based "which bot should do this?" recommendations with match scores and risk ratings, plus an org chart with supervisory directives.
-- **Multi-bot swarms** — spin up teams of 2–6 bots sharing a cloud VM with a chat-style workspace, shared storage/CPU/RAM resource dashboard, and a terminal view.
-- **Human-in-the-loop approvals** — bots pause before risky actions (sending email, spending money, bypassing 2FA, code deploys, CRM bulk updates) and wait for your sign-off, with a full audit history.
-- **Routines** — schedule recurring bot jobs with cron-like schedules and enable toggles.
-- **MCP integrations** — connect enterprise tools via Model Context Protocol server bridges (GitHub, Slack, AWS, and more).
-- **Skill recording** — teach a bot a workflow by performing it once; an accessibility service records your clicks/typing into a replayable, parameterized automation trace.
-- **Live-mode guardrails** — cloud VM connection testing, VM health polling, autonomous outbound toggles, and an hourly USD spend cap.
-
-### Meet the workforce
-
-| Bot | Role |
-|-----|------|
-| **Orion** | Company Manager & Chief Orchestrator |
-| **Atlas** | Sales Outbound |
-| **Lyra** | Talent Scout |
-| **Ledger** | Invoice & Expense Manager |
-| **Spectre** | Bug Reproduction |
-| **Nova** | Market Intelligence |
-| **Turing** | Dev & Terminal Operator |
+- **Chat-first UI** — dark, minimal, monochrome design with a navigation drawer for chat history; message bubbles, streaming responses with a live cursor, and a stop button.
+- **Streaming Gemini chat** — real-time token streaming (`streamGenerateContent` SSE) with multi-turn conversation history, not canned replies.
+- **Markdown rendering** — bold/italic, inline code, bullet and numbered lists, headings, and fenced code blocks with one-tap copy.
+- **Plan mode** — toggle it on, describe a goal, and Rixy returns 3–6 prioritized sub-tasks as cards; save them to the Tasks screen with one tap.
+- **Tasks screen** — planned tasks with priority chips, done/dismiss/reopen states, and delete.
+- **First-run key onboarding** — welcome screen with a live "test key" button and a link to get a free key; skippable with an in-chat banner reminder.
+- **Chat management** — create, rename, delete chats; delete-all with confirmation.
+- **Private by design** — the API key is stored in [EncryptedSharedPreferences](https://developer.android.com/privacy-and-security/cryptography) (Android Keystore), backups are disabled, and there is no analytics, telemetry, or third-party network call. The only network peer is `generativelanguage.googleapis.com`.
+- **Model picker** — switch between Gemini models (2.5 Flash/Pro, 2.0 Flash, and more) at runtime.
 
 ## 🛠 Tech stack
 
 | Layer | Technology |
 |-------|-----------|
 | Language | Kotlin |
-| UI | Jetpack Compose (Material 3), Navigation Compose |
-| Architecture | Single-activity, ViewModel + Repository, Koin for DI |
-| Persistence | Room (KSP) |
-| Background work | WorkManager (`CoroutineWorker`, periodic sync) |
-| Networking | OkHttp (+ logging interceptor), `org.json` |
-| AI | Google Gemini API (`generateContent`, REST) with configurable model |
-| Automation | Android `AccessibilityService` for skill trace recording |
-| Testing | JUnit, Robolectric, Roborazzi (screenshot tests), Compose UI tests |
-| Build | Gradle 9.3.1, AGP 9.1.1, Kotlin 2.2.10 — minSdk 24, target SDK 36 |
+| UI | Jetpack Compose (Material 3), Navigation Compose, custom dark theme & typography scale |
+| Architecture | Single-activity, ViewModel-per-feature, Koin DI |
+| Persistence | Room (KSP), schema exported, indices on message/task foreign keys |
+| Secrets | EncryptedSharedPreferences (Android Keystore), `allowBackup=false` |
+| Networking | OkHttp — SSE streaming, `x-goog-api-key` header, typed error taxonomy |
+| Testing | JUnit, Robolectric, coroutines-test |
+
+No Firebase, no WorkManager, no ads SDKs — the dependency list is deliberately tiny.
 
 ## 🚀 Getting started
 
 ### Prerequisites
 
-- Android Studio (Ladybug or newer recommended)
+- Android Studio (latest stable recommended)
 - JDK 17
-- An Android device or emulator running API 24+
+- A device or emulator running API 24+
 
 ### Build & run
 
 ```bash
 git clone https://github.com/RishabhPatel123/Rixy-Bot.git
 cd Rixy-Bot
+./gradlew :app:assembleDebug
+adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-1. Create a `local.properties` pointing at your Android SDK (Android Studio does this automatically):
-   ```properties
-   sdk.dir=C\:\\path\\to\\Android\\Sdk
-   ```
-2. *(Optional)* Provide a Gemini API key — copy `.env.example` to `.env` and set:
-   ```properties
-   GEMINI_API_KEY=your_real_key_here
-   ```
-3. Build and install:
-   ```bash
-   ./gradlew :app:assembleDebug
-   adb install app/build/outputs/apk/debug/app-debug.apk
-   ```
+Or open the project in Android Studio and press **Run**.
 
-Or simply open the project in Android Studio and press **Run**.
+### API key
 
-> **No keys required to try it:** without a Gemini key or Cloud VM configuration the app runs in offline simulation mode — task planning falls back to a canned local plan and bots reply with a notice that they're simulating. A debug keystore is auto-generated (or create `debug.keystore` in the repo root: storepass `android`, alias `androiddebugkey`).
+On first launch, Rixy asks for your Gemini API key ([get one free here](https://aistudio.google.com/apikey)). The key can also be provided at build time via a `.env` file in the repo root:
 
-### In-app configuration
+```properties
+GEMINI_API_KEY=your_key_here
+```
 
-The **Settings** tab lets you configure at runtime (no rebuild needed):
+(copy `.env.example` to `.env`). A key entered in the app always wins over the build-time one. You can change the key and model any time in **Settings**.
 
-- **Cloud VM** — host/IP, SSH port, region, bearer token, browser-sandbox endpoint (Playwright/Puppeteer), vCPU/RAM allocation, and a "Ping & Verify" connection test.
-- **API credentials** — Gemini API key + model override (with a live "Test" button), GitHub PAT, Stripe key, outreach key, APM key, and a local LLM base URL.
-- **Live mode** — toggle real execution, VM health polling, autonomous outbound actions, and set an hourly spend cap.
-
-## 📁 Project structure
+### Project structure
 
 ```
-app/src/main/java/com/example/
-├── CoworkerApplication.kt    # Koin application setup
-├── MainActivity.kt           # Single activity, nav host, background sync
+app/src/main/java/com/rixy/bot/
+├── RixyApplication.kt        # Koin setup
+├── MainActivity.kt           # Single activity, edge-to-edge
 ├── data/
-│   ├── dao/                  # Room DAOs
-│   ├── database/             # Room database
-│   ├── model/                # Room entities (Bot, Swarm, Task, Approval, Skill, ...)
-│   └── repository/           # CoworkerRepository (+ initial seeding)
+│   ├── db/                   # Room database + DAOs (chats, messages, tasks)
+│   ├── model/                # Room entities
+│   ├── prefs/                # SecretsStore (encrypted key/model storage)
+│   └── repo/                 # ChatRepository (transactional writes)
 ├── di/                       # Koin modules
-├── domain/                   # Orchestration engine (bot routing, initiative plans)
-├── network/                  # GeminiApiService, network monitor
-├── service/                  # AccessibilityService skill recorder
-├── ui/
-│   ├── dashboard/            # Command Center
-│   ├── approvals/            # Human-in-the-loop sign-off queue
-│   ├── swarms/               # Swarm workspace + resource dashboard
-│   ├── routines/             # Routines & MCP servers
-│   ├── manager/              # Company Manager hub
-│   ├── planner/              # Task planner (Auto Orchestrate / Direct Handoff)
-│   ├── skills/               # Skill library (recorded automation traces)
-│   └── settings/             # System & integration settings
-└── worker/                   # WorkManager background sync
+├── network/                  # GeminiApiService (SSE streaming), parser, typed errors
+└── ui/
+    ├── theme/                # Monochrome palette, typography, shapes, spacing grid
+    ├── components/           # Buttons, fields, banners, markdown renderer, chat bubbles
+    ├── chat/                 # Chat screen: message list, plan cards, input bar
+    ├── onboarding/           # First-run key setup
+    ├── tasks/                # Saved planned tasks
+    ├── settings/             # Key, model, data management, about
+    └── viewmodel/            # ChatViewModel, SettingsViewModel
 ```
 
-## 🗺 Roadmap ideas
+## 🧪 Tests
 
-- Wire up the Skill Library screen (recording engine is implemented).
-- Real Cloud VM execution via the configured SSH/browser-sandbox endpoints.
-- Firebase AI SDK migration (dependencies are already present).
+```bash
+./gradlew :app:testDebugUnitTest
+```
+
+Covers the Gemini SSE/JSON parsing, plan extraction (including fenced JSON and priority normalization), and chat-title derivation.
 
 ## 📄 License
 
