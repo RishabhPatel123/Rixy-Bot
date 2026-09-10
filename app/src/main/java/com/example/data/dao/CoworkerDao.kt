@@ -12,6 +12,7 @@ import com.example.data.model.RoutineEntity
 import com.example.data.model.SkillEntity
 import com.example.data.model.SwarmEntity
 import com.example.data.model.SwarmMessageEntity
+import com.example.data.model.SystemSettingsEntity
 import com.example.data.model.TaskEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -115,4 +116,14 @@ interface CoworkerDao {
 
     @Update
     suspend fun updateMcpServer(server: McpServerEntity)
+
+    // System Settings
+    @Query("SELECT * FROM system_settings WHERE id = 1")
+    fun getSystemSettingsFlow(): Flow<SystemSettingsEntity?>
+
+    @Query("SELECT * FROM system_settings WHERE id = 1")
+    suspend fun getSystemSettings(): SystemSettingsEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdateSettings(settings: SystemSettingsEntity)
 }

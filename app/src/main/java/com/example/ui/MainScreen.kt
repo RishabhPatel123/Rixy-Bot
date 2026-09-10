@@ -22,7 +22,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.ui.approvals.ApprovalQueueScreen
 import com.example.ui.dashboard.DashboardScreen
 import com.example.ui.routines.RoutinesMcpScreen
-import com.example.ui.settings.IntegrationsSettingsScreen
+import com.example.ui.settings.SystemSettingsScreen
 import com.example.ui.swarms.SwarmWorkspaceScreen
 import com.example.ui.viewmodel.CoworkerViewModel
 import org.koin.androidx.compose.koinViewModel
@@ -95,7 +95,7 @@ fun MainScreen(viewModel: CoworkerViewModel = koinViewModel()) {
                 RoutinesMcpScreen(viewModel = viewModel)
             }
             composable("settings") {
-                IntegrationsSettingsScreen(
+                SystemSettingsScreen(
                     viewModel = viewModel,
                     onBack = { navController.popBackStack() }
                 )

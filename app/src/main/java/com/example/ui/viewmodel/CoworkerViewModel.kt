@@ -14,6 +14,7 @@ import com.example.data.model.RoutineEntity
 import com.example.data.model.SkillEntity
 import com.example.data.model.SwarmEntity
 import com.example.data.model.SwarmMessageEntity
+import com.example.data.model.SystemSettingsEntity
 import com.example.data.model.TaskEntity
 import com.example.data.model.TaskStatus
 import com.example.data.repository.CoworkerRepository
@@ -23,10 +24,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+data class ConnectionTestUiState(
+    val isTesting: Boolean = false,
+    val isSuccess: Boolean? = null,
+    val latencyMs: Long = 0L,
+    val message: String = ""
+)
 
 
 
@@ -68,6 +77,80 @@ class CoworkerViewModel(
 
     val mcpServers: StateFlow<List<McpServerEntity>> = repository.allMcpServers
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val systemSettings: StateFlow<SystemSettingsEntity> = repository.systemSettings
+        .filterNotNull()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SystemSettingsEntity())
+
+    private val _vmTestState = MutableStateFlow(ConnectionTestUiState())
+    val vmTestState: StateFlow<ConnectionTestUiState> = _vmTestState.asStateFlow()
+
+    private val _aiTestState = MutableStateFlow(ConnectionTestUiState())
+    val aiTestState: StateFlow<ConnectionTestUiState> = _aiTestState.asStateFlow()
+
+    fun updateSystemSettings(settings: SystemSettingsEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateSettings(settings)
+        }
+    }
+
+    fun testCloudVmConnection(host: String, port: Int, token: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _vmTestState.value = ConnectionTestUiState(isTesting = true)
+            val result = geminiApiService.testCloudVmEndpoint(host, port, token)
+            _vmTestState.value = ConnectionTestUiState(
+                isTesting = false,
+                isSuccess = result.isSuccess,
+                latencyMs = result.latencyMs,
+                message = result.message
+            )
+            val current = systemSettings.value
+            repository.updateSettings(
+                current.copy(
+                    lastVmPingMs = result.latencyMs,
+                    lastVmStatus = if (result.isSuccess) "CONNECTED" else "UNREACHABLE",
+                    primaryVmHost = host.trim()
+                )
+            )
+        }
+    }
+
+    fun testGeminiAiCredentials(apiKey: String, model: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _aiTestState.value = ConnectionTestUiState(isTesting = true)
+            val result = geminiApiService.testGeminiApiKey(apiKey, model)
+            _aiTestState.value = ConnectionTestUiState(
+                isTesting = false,
+                isSuccess = result.isSuccess,
+                latencyMs = result.latencyMs,
+                message = result.message
+            )
+            val current = systemSettings.value
+            repository.updateSettings(
+                current.copy(
+                    lastAiPingMs = result.latencyMs,
+                    lastAiStatus = if (result.isSuccess) "VERIFIED" else "FAILED",
+                    geminiApiKeyOverride = apiKey.trim(),
+                    geminiModel = model
+                )
+            )
+        }
+    }
+
+    fun toggleLiveExecutionMode(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = systemSettings.value
+            repository.updateSettings(current.copy(isLiveExecutionEnabled = enabled))
+        }
+    }
+
+    fun resetSettingsToDefaults() {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateSettings(SystemSettingsEntity())
+            _vmTestState.value = ConnectionTestUiState()
+            _aiTestState.value = ConnectionTestUiState()
+        }
+    }
 
     private val _selectedSwarmId = MutableStateFlow<Long>(1L)
     val selectedSwarmId: StateFlow<Long> = _selectedSwarmId.asStateFlow()
@@ -373,10 +456,13 @@ class CoworkerViewModel(
             val responseRole = bot?.role?.title ?: "AI Coworker"
             val responseName = bot?.name ?: "Coworker"
 
+            val settings = systemSettings.value
             val replyText = geminiApiService.generateChatResponse(
                 userMessage = messageText,
                 botName = responseName,
-                botRole = responseRole
+                botRole = responseRole,
+                apiKeyOverride = settings.geminiApiKeyOverride,
+                model = settings.geminiModel
             )
 
             val mockFile = when ((1..4).random()) {
@@ -385,6 +471,8 @@ class CoworkerViewModel(
                 3 -> "repro_screen_stream.webm" to "webm"
                 else -> null
             }
+
+            val activeVm = if (settings.primaryVmHost.isNotBlank()) settings.primaryVmHost else (bot?.currentVmHost ?: "cloud-vm-us-east-1a")
 
             repository.insertMessage(
                 SwarmMessageEntity(
@@ -395,7 +483,7 @@ class CoworkerViewModel(
                     messageText = replyText,
                     sharedFileName = mockFile?.first,
                     sharedFileType = mockFile?.second,
-                    browserActionSnapshot = "Headless Chromium session [ID: sess_9901x] active on ${bot?.currentVmHost ?: "cloud-vm"}"
+                    browserActionSnapshot = "Headless Chromium session [ID: sess_9901x] active on $activeVm"
                 )
             )
         }

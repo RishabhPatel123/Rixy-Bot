@@ -11,6 +11,7 @@ import com.example.data.model.RoutineEntity
 import com.example.data.model.SkillEntity
 import com.example.data.model.SwarmEntity
 import com.example.data.model.SwarmMessageEntity
+import com.example.data.model.SystemSettingsEntity
 import com.example.data.model.TaskEntity
 import com.example.data.model.TaskStatus
 import com.example.domain.manager.ComplexInitiativePlan
@@ -30,6 +31,17 @@ class CoworkerRepository(private val dao: CoworkerDao) {
     val allSkills: Flow<List<SkillEntity>> = dao.getAllSkills()
     val allRoutines: Flow<List<RoutineEntity>> = dao.getAllRoutines()
     val allMcpServers: Flow<List<McpServerEntity>> = dao.getAllMcpServers()
+    val systemSettings: Flow<SystemSettingsEntity?> = dao.getSystemSettingsFlow()
+
+    suspend fun getSettings(): SystemSettingsEntity = withContext(Dispatchers.IO) {
+        dao.getSystemSettings() ?: SystemSettingsEntity().also {
+            dao.insertOrUpdateSettings(it)
+        }
+    }
+
+    suspend fun updateSettings(settings: SystemSettingsEntity) = withContext(Dispatchers.IO) {
+        dao.insertOrUpdateSettings(settings)
+    }
 
     fun getMessagesForSwarm(swarmId: Long): Flow<List<SwarmMessageEntity>> =
         dao.getMessagesForSwarm(swarmId)
@@ -190,6 +202,11 @@ class CoworkerRepository(private val dao: CoworkerDao) {
     }
 
     suspend fun seedInitialDataIfNeeded() = withContext(Dispatchers.IO) {
+        val existingSettings = dao.getSystemSettings()
+        if (existingSettings == null) {
+            dao.insertOrUpdateSettings(SystemSettingsEntity())
+        }
+
         val existingBots = dao.getAllBots().firstOrNull() ?: emptyList()
         val hasManager = existingBots.any { it.isManager || it.id == "bot_orion" }
         if (!hasManager && existingBots.isNotEmpty()) {

@@ -176,3 +176,40 @@ data class McpServerEntity(
     val toolsCount: Int = 8,
     val description: String
 )
+
+@Entity(tableName = "system_settings")
+data class SystemSettingsEntity(
+    @PrimaryKey val id: Int = 1,
+    // Cloud VM & Infrastructure Configuration
+    val vmProvider: String = "Google Cloud Platform (GCP)",
+    val primaryVmHost: String = "10.142.0.4",
+    val sshPort: Int = 22,
+    val clusterRegion: String = "us-central1-a",
+    val vmAuthToken: String = "",
+    val browserSandboxEndpoint: String = "ws://10.142.0.12:3000",
+    val heartbeatIntervalSeconds: Int = 10,
+    val vmCpuCores: Int = 8,
+    val vmRamGb: Int = 32,
+    val lastVmPingMs: Long = 38L,
+    val lastVmStatus: String = "CONNECTED",
+
+    // API Credentials & AI Engine
+    val geminiApiKeyOverride: String = "",
+    val geminiModel: String = "gemini-3.5-flash",
+    val customAiEndpoint: String = "",
+    val customAiApiKey: String = "",
+    val githubToken: String = "",
+    val stripeApiKey: String = "",
+    val outreachApiKey: String = "",
+    val apmMonitoringToken: String = "",
+    val lastAiPingMs: Long = 0L,
+    val lastAiStatus: String = "READY",
+
+    // Live Execution vs Mock Data Mode
+    val isLiveExecutionEnabled: Boolean = false,
+    val useLiveCloudVmTelemetry: Boolean = false,
+    val allowAutonomousOutbound: Boolean = false,
+    val maxHourlySpendLimitUsd: Double = 50.0,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+

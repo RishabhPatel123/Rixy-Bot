@@ -17,6 +17,7 @@ import com.example.data.model.RoutineEntity
 import com.example.data.model.SkillEntity
 import com.example.data.model.SwarmEntity
 import com.example.data.model.SwarmMessageEntity
+import com.example.data.model.SystemSettingsEntity
 import com.example.data.model.TaskEntity
 import com.example.data.model.TaskStatus
 
@@ -71,9 +72,10 @@ class Converters {
         ApprovalRequestEntity::class,
         SkillEntity::class,
         RoutineEntity::class,
-        McpServerEntity::class
+        McpServerEntity::class,
+        SystemSettingsEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
