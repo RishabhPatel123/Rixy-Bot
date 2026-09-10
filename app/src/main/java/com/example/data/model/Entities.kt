@@ -4,6 +4,10 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 enum class BotRole(val title: String, val description: String) {
+    COMPANY_MANAGER(
+        "Company Manager & Chief Orchestrator",
+        "Directs and coordinates all specialist bots, determines optimal task routing, decomposes complex initiatives into phased execution roadmaps, and supervises project delivery."
+    ),
     SALES_OUTBOUND(
         "Sales Outbound",
         "Researches targets, updates CRM, and queues up customized outreach drafts for sign-off."
@@ -68,7 +72,9 @@ data class BotEntity(
     val memoryUsage: String = "1.8 GB",
     val browserSessionActive: Boolean = true,
     val completedTasksCount: Int = 0,
-    val colorHex: Long = 0xFF00E5FF
+    val colorHex: Long = 0xFF00E5FF,
+    val isManager: Boolean = false,
+    val supervisoryDirectives: String = "Orchestrate specialist bots, balance compute load, and enforce human check-gates on high-risk actions."
 )
 
 @Entity(tableName = "swarms")

@@ -67,6 +67,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -121,6 +122,8 @@ import com.example.ui.theme.StatusMintCompleted
 import com.example.ui.theme.StatusMutedIdle
 import com.example.ui.theme.StatusPurpleDraft
 import com.example.ui.viewmodel.CoworkerViewModel
+import com.example.ui.manager.CompanyManagerHubDialog
+import com.example.ui.manager.ExecutiveManagerBanner
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,9 +142,12 @@ fun DashboardScreen(
     var showDispatchDialog by remember { mutableStateOf(false) }
     var showArchitectureDialog by remember { mutableStateOf(false) }
     var showPlannerDialog by remember { mutableStateOf(false) }
+    var showCompanyManagerDialog by remember { mutableStateOf(false) }
+    var initialManagerTab by remember { mutableIntStateOf(0) }
     var selectedBotForDetail by remember { mutableStateOf<BotEntity?>(null) }
     var selectedBotForLogs by remember { mutableStateOf<BotEntity?>(null) }
     var taskForHandoff by remember { mutableStateOf<TaskEntity?>(null) }
+    val orionBot = bots.find { it.isManager || it.id == "bot_orion" } ?: bots.firstOrNull()
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -417,6 +423,17 @@ fun DashboardScreen(
                 }
             }
 
+            // Section: Company Director & Swarm Manager
+            item {
+                ExecutiveManagerBanner(
+                    managerBot = orionBot,
+                    onOpenManagerHub = { tab ->
+                        initialManagerTab = tab
+                        showCompanyManagerDialog = true
+                    }
+                )
+            }
+
             // Section: Your AI Workforce (Roles)
             item {
                 Row(
@@ -475,7 +492,14 @@ fun DashboardScreen(
                     items(bots) { bot ->
                         BotMiniCard(
                             bot = bot,
-                            onClick = { selectedBotForDetail = bot },
+                            onClick = {
+                                if (bot.isManager) {
+                                    initialManagerTab = 0
+                                    showCompanyManagerDialog = true
+                                } else {
+                                    selectedBotForDetail = bot
+                                }
+                            },
                             onViewLogs = { selectedBotForLogs = bot }
                         )
                     }
@@ -613,6 +637,23 @@ fun DashboardScreen(
             onDismiss = { selectedBotForLogs = null }
         )
     }
+
+    if (showCompanyManagerDialog) {
+        CompanyManagerHubDialog(
+            bots = bots,
+            initialTab = initialManagerTab,
+            onDismiss = { showCompanyManagerDialog = false },
+            onDispatchInitiative = { plan ->
+                viewModel.delegateManagerPlan(plan)
+            },
+            onDirectTaskDispatch = { title, desc, botId ->
+                viewModel.dispatchTask(title = title, description = desc, botId = botId)
+            },
+            onRebalanceWorkforce = {
+                viewModel.rebalanceWorkforce()
+            }
+        )
+    }
 }
 
 @Composable
@@ -622,17 +663,24 @@ fun BotMiniCard(
     onViewLogs: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val isManager = bot.isManager || bot.role == BotRole.COMPANY_MANAGER
+
     Card(
         modifier = modifier
             .width(170.dp)
             .clickable { onClick() }
             .testTag("bot_card_${bot.id}"),
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = ImmersiveSurface),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isManager) Color(0xFF190F2E) else ImmersiveSurface
+        ),
         border = BorderStroke(
-            1.dp,
-            if (bot.activityState == BotActivityState.WAITING_FOR_INPUT) ImmersiveAlertCoral.copy(alpha = 0.6f)
-            else ImmersiveBorder.copy(alpha = 0.5f)
+            1.5.dp,
+            when {
+                isManager -> Color(0xFF9333EA)
+                bot.activityState == BotActivityState.WAITING_FOR_INPUT -> ImmersiveAlertCoral.copy(alpha = 0.6f)
+                else -> ImmersiveBorder.copy(alpha = 0.5f)
+            }
         )
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -649,7 +697,22 @@ fun BotMiniCard(
                     isWorking = bot.status == "WORKING",
                     activityState = bot.activityState
                 )
-                BotActivityBadge(activityState = bot.activityState)
+                if (isManager) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = Color(0xFF9333EA)
+                    ) {
+                        Text(
+                            text = "DIRECTOR",
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                } else {
+                    BotActivityBadge(activityState = bot.activityState)
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -662,9 +725,9 @@ fun BotMiniCard(
             )
 
             Text(
-                text = bot.role.title,
+                text = if (isManager) "Swarm Manager" else bot.role.title,
                 fontSize = 11.sp,
-                color = ImmersivePrimary,
+                color = if (isManager) Color(0xFFD8B4FE) else ImmersivePrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

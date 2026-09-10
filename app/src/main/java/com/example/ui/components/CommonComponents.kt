@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -174,6 +175,26 @@ fun BotAvatar(
                     .background(dotColor.copy(alpha = if (isPulsing) pulseAlpha else 1f))
                     .border(1.5.dp, DarkSurface, CircleShape)
             )
+        }
+
+        if (role == BotRole.COMPANY_MANAGER) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 2.dp, y = (-2).dp)
+                    .size((size * 0.4).coerceAtLeast(14.0).dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF9333EA))
+                    .border(1.dp, Color(0xFFFFD700), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "★",
+                    color = Color(0xFFFFD700),
+                    fontSize = (size * 0.24).coerceAtLeast(8.0).sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }

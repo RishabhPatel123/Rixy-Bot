@@ -142,6 +142,27 @@ class CoworkerViewModel(
         }
     }
 
+    fun rebalanceWorkforce() {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.rebalanceBotWorkloads()
+        }
+    }
+
+    fun delegateManagerPlan(plan: com.example.domain.manager.ComplexInitiativePlan, onComplete: ((Long) -> Unit)? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val swarmId = repository.delegateManagerInitiative(plan)
+            _selectedSwarmId.value = swarmId
+            onComplete?.invoke(swarmId)
+        }
+    }
+
+    fun updateBotDirectives(botId: String, directives: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val bot = repository.getBotById(botId) ?: return@launch
+            repository.updateBot(bot.copy(supervisoryDirectives = directives))
+        }
+    }
+
     fun dispatchTask(
         title: String,
         description: String,

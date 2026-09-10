@@ -73,7 +73,7 @@ class Converters {
         RoutineEntity::class,
         McpServerEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

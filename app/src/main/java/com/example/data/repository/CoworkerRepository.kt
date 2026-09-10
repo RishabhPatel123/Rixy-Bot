@@ -13,6 +13,7 @@ import com.example.data.model.SwarmEntity
 import com.example.data.model.SwarmMessageEntity
 import com.example.data.model.TaskEntity
 import com.example.data.model.TaskStatus
+import com.example.domain.manager.ComplexInitiativePlan
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
@@ -161,13 +162,23 @@ class CoworkerRepository(private val dao: CoworkerDao) {
             val cpu = (12..48).random()
             val mem = (15 + (1..20).random()).toDouble() / 10.0
 
-            bot.copy(
-                status = status,
-                activityState = activityState,
-                currentActionText = actionText,
-                cpuUsage = "$cpu%",
-                memoryUsage = "${mem} GB"
-            )
+            if (bot.isManager) {
+                bot.copy(
+                    status = "WORKING",
+                    activityState = BotActivityState.ANALYZING,
+                    currentActionText = "Supervising 6 specialist bots • Complex pipeline active & load balanced",
+                    cpuUsage = "${(10..22).random()}%",
+                    memoryUsage = "2.1 GB"
+                )
+            } else {
+                bot.copy(
+                    status = status,
+                    activityState = activityState,
+                    currentActionText = actionText,
+                    cpuUsage = "$cpu%",
+                    memoryUsage = "${mem} GB"
+                )
+            }
         }
         dao.insertBots(updatedBots)
 
@@ -179,11 +190,49 @@ class CoworkerRepository(private val dao: CoworkerDao) {
     }
 
     suspend fun seedInitialDataIfNeeded() = withContext(Dispatchers.IO) {
-        val existingBots = dao.getAllBots().firstOrNull()
-        if (!existingBots.isNullOrEmpty()) return@withContext
+        val existingBots = dao.getAllBots().firstOrNull() ?: emptyList()
+        val hasManager = existingBots.any { it.isManager || it.id == "bot_orion" }
+        if (!hasManager && existingBots.isNotEmpty()) {
+            dao.insertBot(
+                BotEntity(
+                    id = "bot_orion",
+                    name = "Orion",
+                    role = BotRole.COMPANY_MANAGER,
+                    status = "WORKING",
+                    activityState = BotActivityState.ANALYZING,
+                    currentActionText = "Supervising 6 specialist bots • Decomposing complex initiatives & load balancing",
+                    currentVmHost = "cloud-vm-director-01",
+                    cpuUsage = "14%",
+                    memoryUsage = "2.1 GB",
+                    browserSessionActive = false,
+                    completedTasksCount = 482,
+                    colorHex = 0xFF9333EA,
+                    isManager = true,
+                    supervisoryDirectives = "Auto-route complex tasks, balance bot CPU loads, require human approval on financial & external dispatch."
+                )
+            )
+        }
 
-        // 1. Seed 6 specialized AI Coworker Bots
+        if (existingBots.isNotEmpty()) return@withContext
+
+        // 1. Seed Company Manager & 6 specialized AI Coworker Bots
         val bots = listOf(
+            BotEntity(
+                id = "bot_orion",
+                name = "Orion",
+                role = BotRole.COMPANY_MANAGER,
+                status = "WORKING",
+                activityState = BotActivityState.ANALYZING,
+                currentActionText = "Supervising 6 specialist bots • Decomposing complex initiatives & load balancing",
+                currentVmHost = "cloud-vm-director-01",
+                cpuUsage = "14%",
+                memoryUsage = "2.1 GB",
+                browserSessionActive = false,
+                completedTasksCount = 482,
+                colorHex = 0xFF9333EA,
+                isManager = true,
+                supervisoryDirectives = "Auto-route complex tasks, balance bot CPU loads, require human approval on financial & external dispatch."
+            ),
             BotEntity(
                 id = "bot_atlas",
                 name = "Atlas",
@@ -581,5 +630,117 @@ class CoworkerRepository(private val dao: CoworkerDao) {
                 )
             )
         )
+    }
+
+    suspend fun rebalanceBotWorkloads() = withContext(Dispatchers.IO) {
+        val currentBots = dao.getAllBots().firstOrNull() ?: return@withContext
+        val updatedBots = currentBots.map { bot ->
+            if (bot.isManager) {
+                bot.copy(
+                    status = "WORKING",
+                    activityState = BotActivityState.ANALYZING,
+                    currentActionText = "Workforce rebalanced: CPU loads leveled across 6 specialists",
+                    cpuUsage = "14%",
+                    memoryUsage = "2.1 GB"
+                )
+            } else {
+                bot.copy(
+                    cpuUsage = "${(14..26).random()}%",
+                    memoryUsage = "2.4 GB"
+                )
+            }
+        }
+        dao.insertBots(updatedBots)
+    }
+
+    suspend fun delegateManagerInitiative(plan: ComplexInitiativePlan): Long = withContext(Dispatchers.IO) {
+        val botIds = (plan.phases.map { it.assignedBotId } + "bot_orion").distinct()
+        val swarmId = dao.insertSwarm(
+            SwarmEntity(
+                name = "Director: ${plan.initiativeTitle}",
+                description = plan.executiveSummary,
+                botIds = botIds.joinToString(","),
+                sharedVmId = plan.targetSwarmCluster,
+                activeGoal = plan.initiativeTitle,
+                isRunning = true
+            )
+        )
+
+        // Manager Orion posts executive dispatch briefing to swarm chat
+        dao.insertMessage(
+            SwarmMessageEntity(
+                swarmId = swarmId,
+                senderId = "bot_orion",
+                senderName = "Orion (Company Director)",
+                senderRole = "Company Manager",
+                messageText = "🎯 [DIRECTOR INITIATIVE DISPATCHED]: ${plan.initiativeTitle}\n\n" +
+                        "Executive Strategy: ${plan.executiveSummary}\n\n" +
+                        "Phased Milestones: ${plan.phases.size} stages assigned to specialists. Human approval gate active on Phase 4.\n\n" +
+                        "Contingency: ${plan.contingencyPolicy}",
+                timestamp = System.currentTimeMillis()
+            )
+        )
+
+        // Insert tasks for each phase
+        plan.phases.forEachIndexed { index, phase ->
+            val taskId = dao.insertTask(
+                TaskEntity(
+                    title = phase.taskTitle,
+                    description = "${phase.phaseName}: ${phase.taskDescription}\nArtifact: ${phase.expectedArtifact}",
+                    primaryBotId = phase.assignedBotId,
+                    swarmId = swarmId,
+                    status = if (index == 0) TaskStatus.RUNNING else TaskStatus.SCHEDULED,
+                    currentStepText = "Phase ${phase.phaseNumber} allocated to ${phase.assignedBotName}. Provisioning workspace...",
+                    priority = phase.priority,
+                    isHumanApprovalNeeded = phase.requiresHumanApprovalGate,
+                    createdAt = System.currentTimeMillis(),
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+
+            // If requires human approval gate, create pending approval request
+            if (phase.requiresHumanApprovalGate) {
+                dao.insertApproval(
+                    ApprovalRequestEntity(
+                        taskId = taskId,
+                        botId = phase.assignedBotId,
+                        botName = phase.assignedBotName,
+                        botRole = BotRole.COMPANY_MANAGER,
+                        type = ApprovalType.CODE_DEPLOY,
+                        title = phase.taskTitle,
+                        details = phase.approvalReason ?: "Human authorization required before proceeding past checkpoint.",
+                        previewPayload = "Phase: ${phase.phaseName}\nExpected Artifact: ${phase.expectedArtifact}\nTarget Swarm: ${plan.targetSwarmCluster}",
+                        riskLevel = "HIGH",
+                        requiresInput = false
+                    )
+                )
+            }
+
+            // Update assigned bot state
+            val bot = dao.getBotById(phase.assignedBotId)
+            if (bot != null && index == 0) {
+                dao.updateBot(
+                    bot.copy(
+                        status = "WORKING",
+                        activityState = BotActivityState.RESEARCHING,
+                        currentActionText = "Director Directive: Initiating ${phase.phaseName} (${phase.taskTitle})"
+                    )
+                )
+            }
+        }
+
+        // Update Orion's status
+        val orion = dao.getBotById("bot_orion")
+        if (orion != null) {
+            dao.updateBot(
+                orion.copy(
+                    status = "WORKING",
+                    activityState = BotActivityState.ANALYZING,
+                    currentActionText = "Supervising 4-phase campaign: '${plan.initiativeTitle}' • Monitoring specialist handoffs"
+                )
+            )
+        }
+
+        swarmId
     }
 }

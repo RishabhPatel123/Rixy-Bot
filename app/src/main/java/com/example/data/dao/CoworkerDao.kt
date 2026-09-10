@@ -19,11 +19,14 @@ import kotlinx.coroutines.flow.Flow
 interface CoworkerDao {
 
     // Bots
-    @Query("SELECT * FROM bots ORDER BY name ASC")
+    @Query("SELECT * FROM bots ORDER BY isManager DESC, name ASC")
     fun getAllBots(): Flow<List<BotEntity>>
 
     @Query("SELECT * FROM bots WHERE id = :id")
     suspend fun getBotById(id: String): BotEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBot(bot: BotEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBots(bots: List<BotEntity>)
