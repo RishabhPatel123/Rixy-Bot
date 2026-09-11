@@ -69,6 +69,20 @@ class SettingsViewModel(
         secrets.onboardingDone = true
     }
 
+    // ---- Agent ----
+
+    val agentFullAuto: Boolean get() = secrets.agentFullAuto
+
+    fun setAgentFullAuto(enabled: Boolean) {
+        secrets.agentFullAuto = enabled
+    }
+
+    val agentAllowedToolCount: Int get() = secrets.agentAllowedTools.size
+
+    fun resetAgentAllowedTools() {
+        secrets.agentAllowedTools = emptySet()
+    }
+
     fun deleteAllChats() {
         viewModelScope.launch {
             runCatching { repository.deleteAllChats() }

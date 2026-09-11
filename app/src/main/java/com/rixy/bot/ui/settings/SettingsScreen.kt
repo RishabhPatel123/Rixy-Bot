@@ -10,11 +10,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Done
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -161,6 +163,130 @@ fun SettingsScreen(
                 options = viewModel.modelOptions,
                 onSelect = viewModel::setModel,
             )
+
+            SectionHeader(stringResource(R.string.settings_section_agent))
+
+            var fullAuto by remember { mutableStateOf(viewModel.agentFullAuto) }
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(Spacing.lg)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                stringResource(R.string.agent_full_auto),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                            Text(
+                                stringResource(R.string.agent_full_auto_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        androidx.compose.material3.Switch(
+                            checked = fullAuto,
+                            onCheckedChange = {
+                                fullAuto = it
+                                viewModel.setAgentFullAuto(it)
+                            },
+                        )
+                    }
+                    Spacer(Modifier.height(Spacing.md))
+                    Text(
+                        stringResource(R.string.agent_allowed_count, viewModel.agentAllowedToolCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                    )
+                    if (viewModel.agentAllowedToolCount > 0) {
+                        TextButton(onClick = { viewModel.resetAgentAllowedTools() }) {
+                            Text(stringResource(R.string.agent_reset_allowed))
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(Spacing.md))
+
+            var permRefresh by remember { mutableStateOf(0) }
+            val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+            ) { permRefresh++ }
+            val agentPermissions = listOf(
+                stringResource(R.string.perm_sms) to android.Manifest.permission.SEND_SMS,
+                stringResource(R.string.perm_phone) to android.Manifest.permission.CALL_PHONE,
+                stringResource(R.string.perm_contacts) to android.Manifest.permission.READ_CONTACTS,
+                stringResource(R.string.perm_calendar) to android.Manifest.permission.READ_CALENDAR,
+                stringResource(R.string.perm_location) to android.Manifest.permission.ACCESS_COARSE_LOCATION,
+            )
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(Spacing.lg)) {
+                    Text(
+                        stringResource(R.string.agent_permissions),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Spacer(Modifier.height(Spacing.sm))
+                    agentPermissions.forEach { (label, permission) ->
+                        val granted = remember(permRefresh, permission) {
+                            androidx.core.content.ContextCompat.checkSelfPermission(
+                                context, permission
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(vertical = Spacing.xs),
+                        ) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (granted) {
+                                Icon(
+                                    androidx.compose.material.icons.Icons.Filled.Done,
+                                    contentDescription = null,
+                                    tint = com.rixy.bot.ui.theme.Success,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            } else {
+                                TextButton(onClick = { permissionLauncher.launch(permission) }) {
+                                    Text(stringResource(R.string.agent_grant))
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(Spacing.sm))
+                    Text(
+                        if (com.rixy.bot.service.NotificationStore.listenerConnected) {
+                            stringResource(R.string.agent_notif_access_on)
+                        } else {
+                            stringResource(R.string.agent_notif_access_off)
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS
+                                )
+                            )
+                        }
+                    }) {
+                        Text(stringResource(R.string.agent_notif_access_button))
+                    }
+                }
+            }
 
             SectionHeader(stringResource(R.string.settings_section_data))
             Surface(

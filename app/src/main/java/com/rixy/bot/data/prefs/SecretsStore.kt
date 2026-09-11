@@ -27,6 +27,16 @@ class SecretsStore(context: Context) {
         get() = prefs.getBoolean(KEY_ONBOARDING_DONE, false)
         set(value) = prefs.edit().putBoolean(KEY_ONBOARDING_DONE, value).apply()
 
+    /** Agent autonomy: false = supervised (confirm irreversible actions), true = full auto. */
+    var agentFullAuto: Boolean
+        get() = prefs.getBoolean(KEY_AGENT_FULL_AUTO, false)
+        set(value) = prefs.edit().putBoolean(KEY_AGENT_FULL_AUTO, value).apply()
+
+    /** Tools the user marked "always allow" during supervised confirmations. */
+    var agentAllowedTools: Set<String>
+        get() = prefs.getStringSet(KEY_AGENT_ALLOWED_TOOLS, emptySet()) ?: emptySet()
+        set(value) = prefs.edit().putStringSet(KEY_AGENT_ALLOWED_TOOLS, value).apply()
+
     /** Key entered by the user, else the build-time key from .env, else null. */
     fun resolveApiKey(): String? {
         val userKey = geminiApiKey
@@ -56,6 +66,8 @@ class SecretsStore(context: Context) {
         private const val KEY_API_KEY = "gemini_api_key"
         private const val KEY_MODEL = "gemini_model"
         private const val KEY_ONBOARDING_DONE = "onboarding_done"
+        private const val KEY_AGENT_FULL_AUTO = "agent_full_auto"
+        private const val KEY_AGENT_ALLOWED_TOOLS = "agent_allowed_tools"
         private const val PLACEHOLDER_KEY = "MY_GEMINI_API_KEY"
     }
 }

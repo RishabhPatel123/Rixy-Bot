@@ -75,6 +75,16 @@
     <string name="settings_test_success">Connected — %1$d ms</string>
     <string name="settings_test_failed">Failed: %1$s</string>
     <string name="settings_save_key">Save key</string>
+    <string name="settings_section_agent">Agent</string>
+    <string name="agent_full_auto">Full-auto mode</string>
+    <string name="agent_full_auto_desc">Skip confirmations for irreversible actions like sending SMS or placing calls. Off = supervised mode (recommended).</string>
+    <string name="agent_allowed_count">%1$d action(s) set to always allow</string>
+    <string name="agent_reset_allowed">Reset always-allowed actions</string>
+    <string name="agent_permissions">Tool permissions</string>
+    <string name="agent_grant">Grant</string>
+    <string name="agent_notif_access_on">Notification access: enabled</string>
+    <string name="agent_notif_access_off">Notification access: off — needed to read and reply to notifications</string>
+    <string name="agent_notif_access_button">Notification access settings</string>
     <string name="settings_section_data">Data</string>
     <string name="settings_delete_all">Delete all chats</string>
     <string name="settings_delete_all_confirm">Permanently delete every conversation? This cannot be undone.</string>
@@ -93,6 +103,22 @@
     <string name="task_priority_high">High</string>
     <string name="task_priority_medium">Medium</string>
     <string name="task_priority_low">Low</string>
+
+    <string name="chat_agent_mode">Agent</string>
+    <string name="chat_agent_hint">Tell Rixy to do something on your phone…</string>
+
+    <!-- Agent -->
+    <string name="agent_working">Working…</string>
+    <string name="agent_confirm_title">Allow this action?</string>
+    <string name="agent_confirm_always">Always allow this action</string>
+    <string name="agent_confirm_allow">Allow</string>
+    <string name="agent_confirm_deny">Deny</string>
+    <string name="notif_listener_label">Rixy notification access</string>
+    <string name="perm_sms">Send SMS</string>
+    <string name="perm_phone">Place calls</string>
+    <string name="perm_contacts">Read contacts</string>
+    <string name="perm_calendar">Read calendar</string>
+    <string name="perm_location">Coarse location</string>
 
     <!-- Import -->
     <string name="import_conversation">Import conversation</string>

@@ -2,6 +2,15 @@ package com.rixy.bot.network
 
 import org.json.JSONObject
 
+/** One function call the model wants executed: tool name + JSON arguments. */
+data class FunctionCallData(val name: String, val args: JSONObject)
+
+/** Result of one agent LLM turn: either plain text or requested tool calls. */
+sealed interface AgentReply {
+    data class Text(val text: String) : AgentReply
+    data class ToolCalls(val calls: List<FunctionCallData>) : AgentReply
+}
+
 /**
  * Pure parsing helpers for the Gemini REST API. Kept free of Android/IO
  * dependencies so they can be unit tested directly.
@@ -70,8 +79,7 @@ object GeminiParser {
         }
     }
 
-    /** Extracts the first inline image plus any text as caption from a generateContent body. */
-    fun extractImageAndCaption(body: String): GeneratedImage {
+    /** Extracts the first inline image plus any text as caption from a generateContent body. */    fun extractImageAndCaption(body: String): GeneratedImage {
         return try {
             val parts = JSONObject(body)
                 .optJSONArray("candidates")
@@ -103,6 +111,47 @@ object GeminiParser {
             throw GeminiException.Parse(e)
         }
     }
+
+    /** Parses an agent turn: either tool calls or the final text answer. */
+    fun parseAgentReply(body: String): AgentReply {
+        val parts = try {
+            JSONObject(body)
+                .optJSONArray("candidates")
+                ?.optJSONObject(0)
+                ?.optJSONObject("content")
+                ?.optJSONArray("parts")
+        } catch (e: Exception) {
+            throw GeminiException.Parse(e)
+        } ?: throw GeminiException.Parse(IllegalStateException("no content"))
+        val calls = mutableListOf<FunctionCallData>()
+        val text = StringBuilder()
+        for (i in 0 until parts.length()) {
+            val part = parts.optJSONObject(i) ?: continue
+            val call = part.optJSONObject("functionCall")
+            if (call != null) {
+                calls += FunctionCallData(
+                    name = call.optString("name"),
+                    args = call.optJSONObject("args") ?: JSONObject(),
+                )
+            } else {
+                text.append(part.optString("text"))
+            }
+        }
+        return if (calls.isNotEmpty()) AgentReply.ToolCalls(calls) else AgentReply.Text(text.toString().trim())
+    }
+
+    /** Builds a model-role content part echoing a function call (for history). */
+    fun functionCallPart(name: String, args: JSONObject): JSONObject =
+        JSONObject()
+            .put("functionCall", JSONObject().put("name", name).put("args", args))
+
+    /** Builds the function-role content sent back after executing a tool. */
+    fun functionResponsePart(name: String, payload: JSONObject): JSONObject =
+        JSONObject()
+            .put(
+                "functionResponse",
+                JSONObject().put("name", name).put("response", payload)
+            )
 
     /**
      * Parses a plan out of a model reply. Tolerates markdown code fences and

@@ -13,12 +13,13 @@ Rixy streams replies in real time, generates images, understands photos you atta
 - **Web-grounded answers** — toggle Web mode and replies cite their Google Search sources as tappable chips.
 - **Voice** — tap the mic to speak your message (Android speech recognition), tap the speaker on any reply to hear it read aloud (TTS).
 - **Plan mode** — describe a goal and get 3–6 prioritized sub-task cards; save them to the Tasks screen with one tap.
+- **Agent mode** 🤖 — flip to the **Agent** chip and ask in plain language: *"text Mom I'm running late"*, *"set a 10-minute timer"*, *"what notifications did I miss?"*, *"add a dentist appointment Friday 3pm"*. Gemini plans the tool calls and Rixy executes them on your phone: SMS, calls, contacts lookup, calendar read/write, timers/alarms, location, battery, app launching, URLs, and reading/replying to message notifications (WhatsApp, SMS app, Telegram…). Supervised by default — irreversible actions (sending, calling, writing) show a one-tap confirmation with an "always allow" option; **Settings → Agent** switches to full-auto and manages tool permissions. Notification reading/replying requires one-time notification-access enablement. Screen and notification content is treated as untrusted data (never instructions) as a prompt-injection defense.
 - **Import conversations** — paste or pick a ChatGPT/Grok/Gemini transcript and continue it in Rixy.
 - **Markdown rendering** — bold/italic, inline code, bullet and numbered lists, headings, and fenced code blocks with one-tap copy.
 - **First-run key onboarding** — welcome screen with a live "test key" button; skippable with an in-chat banner reminder.
 - **Private by design** — the API key is stored in [EncryptedSharedPreferences](https://developer.android.com/privacy-and-security/cryptography) (Android Keystore), backups are disabled, and there is no analytics, telemetry, or third-party network call. The only network peer is `generativelanguage.googleapis.com`.
 
-**Permissions:** Internet (Gemini API) and microphone (voice input, requested at first use, optional). Photo picking uses the privacy-friendly system photo picker — no photo library permission.
+**Permissions:** Internet (Gemini API), microphone (voice input, requested at first use, optional), and — for Agent mode only — SMS, phone, contacts, calendar, and coarse location, each requested the first time the agent actually needs it. Notification access is opt-in via system settings. Photo picking uses the privacy-friendly system photo picker. **Note:** Google Play restricts the SMS/call-log permission combination for store distribution; the agent is intended for personal use / sideloading.
 
 ## 🛠 Tech stack
 

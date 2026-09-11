@@ -123,6 +123,9 @@ fun ChatScreen(
     val isStreaming by viewModel.isStreaming.collectAsStateWithLifecycle()
     val isPlanning by viewModel.isPlanning.collectAsStateWithLifecycle()
     val isGeneratingImage by viewModel.isGeneratingImage.collectAsStateWithLifecycle()
+    val isAgentWorking by viewModel.isAgentWorking.collectAsStateWithLifecycle()
+    val agentStatus by viewModel.agentStatus.collectAsStateWithLifecycle()
+    val pendingConfirmation by viewModel.pendingConfirmation.collectAsStateWithLifecycle()
     val attachedImagePath by viewModel.attachedImagePath.collectAsStateWithLifecycle()
     val hasKey = viewModel.hasApiKey
     val snackbarHostState = remember { SnackbarHostState() }
@@ -172,6 +175,9 @@ fun ChatScreen(
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) showListening = true }
+    val agentPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> viewModel.onPermissionResult(granted) }
     val onMicTap = {
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
@@ -215,12 +221,15 @@ fun ChatScreen(
                         importedMessage.format(event.count),
                         duration = SnackbarDuration.Short,
                     )
+                is ChatUiEvent.PermissionNeeded ->
+                    agentPermissionLauncher.launch(event.permission)
             }
         }
     }
 
-    val busy = isStreaming || isPlanning || isGeneratingImage
-    val listIsEmpty = messages.isEmpty() && streamingText == null && !isPlanning && !isGeneratingImage
+    val busy = isStreaming || isPlanning || isGeneratingImage || isAgentWorking
+    val listIsEmpty = messages.isEmpty() && streamingText == null && !isPlanning &&
+        !isGeneratingImage && !isAgentWorking
 
     Column(
         modifier = Modifier
@@ -253,6 +262,8 @@ fun ChatScreen(
                         streamingText = streamingText,
                         isPlanning = isPlanning,
                         isGeneratingImage = isGeneratingImage,
+                        isAgentWorking = isAgentWorking,
+                        agentStatus = agentStatus,
                         imageStore = viewModel.imageStore,
                         speakingMessageId = speakingMessageId,
                         onSpeak = speak,
@@ -290,6 +301,46 @@ fun ChatScreen(
                 showListening = false
                 if (transcript.isNotBlank()) inputText = transcript
             },
+        )
+    }
+
+    pendingConfirmation?.let { confirmation ->
+        var alwaysAllow by remember(confirmation) { mutableStateOf(false) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmation.onResult(false, false) },
+            title = { Text(stringResource(R.string.agent_confirm_title)) },
+            text = {
+                Column {
+                    Text(
+                        confirmation.summary,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Spacer(Modifier.height(Spacing.md))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Checkbox(
+                            checked = alwaysAllow,
+                            onCheckedChange = { alwaysAllow = it },
+                        )
+                        Text(
+                            stringResource(R.string.agent_confirm_always),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextTertiary,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmation.onResult(true, alwaysAllow) }) {
+                    Text(stringResource(R.string.agent_confirm_allow))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmation.onResult(false, false) }) {
+                    Text(stringResource(R.string.agent_confirm_deny))
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
         )
     }
 }
@@ -332,6 +383,8 @@ private fun MessageList(
     streamingText: String?,
     isPlanning: Boolean,
     isGeneratingImage: Boolean,
+    isAgentWorking: Boolean,
+    agentStatus: String?,
     imageStore: com.rixy.bot.data.prefs.ImageStore,
     speakingMessageId: Long?,
     onSpeak: (ChatMessageEntity) -> Unit,
@@ -340,8 +393,8 @@ private fun MessageList(
 ) {
     val listState = rememberLazyListState()
     val initialTopId = remember { messages.maxOfOrNull { it.id } ?: Long.MIN_VALUE }
-    LaunchedEffect(messages.size, streamingText, isPlanning, isGeneratingImage) {
-        if (messages.isNotEmpty() || streamingText != null || isPlanning || isGeneratingImage) {
+    LaunchedEffect(messages.size, streamingText, isPlanning, isGeneratingImage, isAgentWorking) {
+        if (messages.isNotEmpty() || streamingText != null || isPlanning || isGeneratingImage || isAgentWorking) {
             listState.animateScrollToItem(listState.layoutInfo.totalItemsCount)
         }
     }
@@ -407,6 +460,21 @@ private fun MessageList(
                     TypingIndicator()
                     Text(
                         stringResource(R.string.chat_image_generating),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextTertiary,
+                    )
+                }
+            }
+        }
+        if (isAgentWorking) {
+            item(key = "agent-working") {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                ) {
+                    TypingIndicator()
+                    Text(
+                        agentStatus ?: stringResource(R.string.agent_working),
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextTertiary,
                     )
@@ -613,6 +681,11 @@ private fun ChatInputBar(
                     selected = mode == SendMode.IMAGE,
                     onClick = { mode = if (mode == SendMode.IMAGE) SendMode.CHAT else SendMode.IMAGE },
                 )
+                ModeChip(
+                    label = stringResource(R.string.chat_agent_mode),
+                    selected = mode == SendMode.AGENT,
+                    onClick = { mode = if (mode == SendMode.AGENT) SendMode.CHAT else SendMode.AGENT },
+                )
                 Spacer(Modifier.weight(1f))
                 ModeChip(
                     label = stringResource(R.string.chat_web_mode),
@@ -673,6 +746,7 @@ private fun ChatInputBar(
                             when (mode) {
                                 SendMode.PLAN -> R.string.chat_plan_hint
                                 SendMode.IMAGE -> R.string.chat_image_hint
+                                SendMode.AGENT -> R.string.chat_agent_hint
                                 SendMode.CHAT -> R.string.chat_input_hint
                             }
                         ),

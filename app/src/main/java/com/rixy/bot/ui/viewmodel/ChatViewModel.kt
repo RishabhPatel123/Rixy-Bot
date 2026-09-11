@@ -37,16 +37,26 @@ sealed interface ChatUiEvent {
     data class PlanFailed(val message: String) : ChatUiEvent
     data class ImageSavedToGallery(val success: Boolean) : ChatUiEvent
     data class Imported(val count: Int) : ChatUiEvent
+    data class PermissionNeeded(val permission: String) : ChatUiEvent
 }
 
+/** Awaiting the user's verdict on an irreversible agent action. */
+data class PendingConfirmation(
+    val title: String,
+    val summary: String,
+    val onResult: (allowed: Boolean, alwaysAllow: Boolean) -> Unit,
+)
+
 /** What the input bar should do with the next message. */
-enum class SendMode { CHAT, PLAN, IMAGE }
+enum class SendMode { CHAT, PLAN, IMAGE, AGENT }
 
 class ChatViewModel(
     private val repository: ChatRepository,
     private val gemini: GeminiApiService,
     private val secrets: SecretsStore,
     val imageStore: ImageStore,
+    private val toolRegistry: com.rixy.bot.agent.ToolRegistry,
+    private val appContext: android.content.Context,
 ) : ViewModel() {
 
     val chats = repository.chats.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -71,6 +81,17 @@ class ChatViewModel(
 
     private val _isGeneratingImage = MutableStateFlow(false)
     val isGeneratingImage = _isGeneratingImage.asStateFlow()
+
+    private val _isAgentWorking = MutableStateFlow(false)
+    val isAgentWorking = _isAgentWorking.asStateFlow()
+
+    private val _agentStatus = MutableStateFlow<String?>(null)
+    val agentStatus = _agentStatus.asStateFlow()
+
+    private val _pendingConfirmation = MutableStateFlow<PendingConfirmation?>(null)
+    val pendingConfirmation = _pendingConfirmation.asStateFlow()
+
+    private var permissionDeferred: kotlinx.coroutines.CompletableDeferred<Boolean>? = null
 
     private val _attachedImagePath = MutableStateFlow<String?>(null)
     val attachedImagePath = _attachedImagePath.asStateFlow()
@@ -115,8 +136,109 @@ class ChatViewModel(
         when (mode) {
             SendMode.PLAN -> requestPlan(rawText)
             SendMode.IMAGE -> requestImage(rawText)
+            SendMode.AGENT -> runAgent(rawText)
             SendMode.CHAT -> sendChat(rawText, webGrounded)
         }
+    }
+
+    /** Agent mode: let Gemini call device tools to fulfill the request. */
+    private fun runAgent(rawRequest: String) {
+        val request = rawRequest.trim()
+        if (request.isEmpty() || busy()) return
+
+        viewModelScope.launch {
+            val apiKey = secrets.resolveApiKey()
+            val model = secrets.geminiModel
+            if (apiKey == null) {
+                _events.emit(ChatUiEvent.Error(NO_KEY_MESSAGE, canRetry = true))
+                return@launch
+            }
+
+            val chatId = ensureChat(request)
+            runCatching { repository.addMessage(chatId, isFromUser = true, text = request) }
+            val history = runCatching {
+                repository.getHistory(chatId)
+                    .dropLast(1) // the request itself is appended by the executor
+                    .takeLast(20)
+                    .map { it.isFromUser to it.text }
+            }.getOrDefault(emptyList())
+
+            val transport = object : com.rixy.bot.agent.AgentTransport {
+                override suspend fun turn(
+                    contents: org.json.JSONArray,
+                    tools: org.json.JSONArray,
+                ): String = gemini.agentTurn(contents, tools, apiKey, model)
+            }
+            val executor = com.rixy.bot.agent.AgentExecutor(
+                appContext = appContext,
+                registry = toolRegistry,
+                transport = transport,
+                permissionGate = { tool ->
+                    val permission = tool.requiredPermission
+                    val alreadyGranted = permission != null &&
+                        androidx.core.content.ContextCompat.checkSelfPermission(
+                            appContext, permission
+                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    when {
+                        permission == null || alreadyGranted -> true
+                        else -> {
+                            val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
+                            permissionDeferred = deferred
+                            _events.emit(ChatUiEvent.PermissionNeeded(permission))
+                            val granted = deferred.await()
+                            permissionDeferred = null
+                            granted
+                        }
+                    }
+                },
+                confirmationGate = { tool, args ->
+                    val skipPrompt = secrets.agentFullAuto || tool.name in secrets.agentAllowedTools
+                    if (skipPrompt) {
+                        true
+                    } else {
+                        val deferred = kotlinx.coroutines.CompletableDeferred<Pair<Boolean, Boolean>>()
+                        _pendingConfirmation.value = PendingConfirmation(
+                            title = tool.name,
+                            summary = tool.summarize(args),
+                            onResult = { allowed, alwaysAllow -> deferred.complete(allowed to alwaysAllow) },
+                        )
+                        val (allowed, alwaysAllow) = deferred.await()
+                        _pendingConfirmation.value = null
+                        if (allowed && alwaysAllow) {
+                            secrets.agentAllowedTools = secrets.agentAllowedTools + tool.name
+                        }
+                        allowed
+                    }
+                },
+                onAction = { status -> _agentStatus.value = status },
+            )
+
+            _isAgentWorking.value = true
+            try {
+                when (val outcome = executor.run(history, request)) {
+                    is com.rixy.bot.agent.AgentExecutor.Outcome.Reply -> {
+                        val text = if (outcome.actions.isEmpty()) outcome.text
+                        else outcome.actions.joinToString("\n") + "\n\n" + outcome.text
+                        repository.addMessage(chatId, isFromUser = false, text = text)
+                    }
+                    is com.rixy.bot.agent.AgentExecutor.Outcome.Failed ->
+                        _events.emit(ChatUiEvent.Error(outcome.message, canRetry = true))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _events.emit(ChatUiEvent.Error(userMessage(e), canRetry = true))
+            } finally {
+                _isAgentWorking.value = false
+                _agentStatus.value = null
+                _pendingConfirmation.value = null
+            }
+        }
+    }
+
+    /** Called by the UI after a runtime permission requested by the agent resolves. */
+    fun onPermissionResult(granted: Boolean) {
+        permissionDeferred?.complete(granted)
     }
 
     private fun sendChat(rawText: String, webGrounded: Boolean) {
@@ -341,7 +463,8 @@ class ChatViewModel(
         }
     }
 
-    private fun busy() = _isStreaming.value || _isPlanning.value || _isGeneratingImage.value
+    private fun busy() =
+        _isStreaming.value || _isPlanning.value || _isGeneratingImage.value || _isAgentWorking.value
 
     private suspend fun ensureChat(firstPrompt: String): Long =
         _selectedChatId.value
