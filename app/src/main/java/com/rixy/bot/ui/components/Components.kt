@@ -1,7 +1,13 @@
 package com.rixy.bot.ui.components
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,9 +28,17 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -32,10 +46,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rixy.bot.ui.theme.Border
 import com.rixy.bot.ui.theme.Danger
+import com.rixy.bot.ui.theme.Motion
 import com.rixy.bot.ui.theme.Spacing
 import com.rixy.bot.ui.theme.Surface
 import com.rixy.bot.ui.theme.TextPrimary
 import com.rixy.bot.ui.theme.TextTertiary
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun PrimaryButton(
@@ -45,10 +62,18 @@ fun PrimaryButton(
     enabled: Boolean = true,
     loading: Boolean = false,
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (pressed) 0.97f else 1f,
+        animationSpec = Motion.Liquid,
+        label = "press-scale",
+    )
     Button(
         onClick = onClick,
         enabled = enabled && !loading,
-        modifier = modifier.height(52.dp),
+        interactionSource = interaction,
+        modifier = modifier.height(52.dp).scale(scale),
         shape = MaterialTheme.shapes.medium,
         colors = ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.primary,
@@ -187,4 +212,34 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
         color = TextTertiary,
         modifier = modifier.padding(top = Spacing.xxl, bottom = Spacing.md),
     )
+}
+
+/**
+ * Liquid entrance: rises [offsetDp] up while fading in, with a whisper of scale.
+ * [staggerMs] delays the start so siblings can cascade in.
+ */
+@Composable
+fun EnterAnimation(
+    modifier: Modifier = Modifier,
+    offsetDp: Int = 18,
+    staggerMs: Long = 0L,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val offsetPx = with(density) { offsetDp.dp.toPx() }
+    val alpha = remember { Animatable(0f) }
+    val translation = remember { Animatable(offsetPx) }
+    LaunchedEffect(Unit) {
+        if (staggerMs > 0) delay(staggerMs)
+        launch { alpha.animateTo(1f, tween(Motion.FADE_MS, easing = Motion.EmphasizedEasing)) }
+        translation.animateTo(0f, Motion.Liquid)
+    }
+    Box(
+        modifier = modifier.graphicsLayer {
+            this.alpha = alpha.value
+            this.translationY = translation.value
+        }
+    ) {
+        content()
+    }
 }

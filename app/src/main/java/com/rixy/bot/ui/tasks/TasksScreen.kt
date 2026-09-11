@@ -119,6 +119,7 @@ fun TasksScreen(
                         onDismiss = { viewModel.dismiss(task.id) },
                         onReopen = { viewModel.reopen(task.id) },
                         onDelete = { viewModel.delete(task) },
+                        modifier = Modifier.animateItem(),
                     )
                 }
             }
@@ -133,12 +134,13 @@ private fun TaskCard(
     onDismiss: () -> Unit,
     onReopen: () -> Unit,
     onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(Spacing.lg)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

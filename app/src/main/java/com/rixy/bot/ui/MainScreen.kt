@@ -1,5 +1,10 @@
 package com.rixy.bot.ui
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -50,6 +55,7 @@ import com.rixy.bot.ui.components.PrimaryButton
 import com.rixy.bot.ui.onboarding.OnboardingScreen
 import com.rixy.bot.ui.settings.SettingsScreen
 import com.rixy.bot.ui.tasks.TasksScreen
+import com.rixy.bot.ui.theme.Motion
 import com.rixy.bot.ui.theme.Spacing
 import com.rixy.bot.ui.theme.TextTertiary
 import com.rixy.bot.ui.viewmodel.ChatViewModel
@@ -148,6 +154,7 @@ fun RixyApp(secrets: SecretsStore) {
                                     },
                                     onRename = { renameTarget = chat.id },
                                     onDelete = { deleteTarget = chat.id },
+                                    modifier = Modifier.animateItem(),
                                 )
                             }
                         }
@@ -178,6 +185,19 @@ fun RixyApp(secrets: SecretsStore) {
         NavHost(
             navController = navController,
             startDestination = startDestination,
+            enterTransition = {
+                fadeIn(tween(Motion.FADE_MS)) +
+                    scaleIn(initialScale = 0.98f, animationSpec = tween(Motion.FADE_MS))
+            },
+            exitTransition = { fadeOut(tween(Motion.FADE_MS / 2)) },
+            popEnterTransition = {
+                fadeIn(tween(Motion.FADE_MS)) +
+                    slideInVertically(
+                        initialOffsetY = { it / 24 },
+                        animationSpec = tween(Motion.FADE_MS),
+                    )
+            },
+            popExitTransition = { fadeOut(tween(Motion.FADE_MS / 2)) },
         ) {
             composable(Routes.ONBOARDING) {
                 OnboardingScreen(
@@ -271,10 +291,11 @@ private fun DrawerChatRow(
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(vertical = Spacing.xs, horizontal = Spacing.xs),

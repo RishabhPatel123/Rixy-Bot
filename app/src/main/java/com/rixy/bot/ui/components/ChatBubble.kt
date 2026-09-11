@@ -1,5 +1,6 @@
 package com.rixy.bot.ui.components
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -26,55 +27,69 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
+import com.rixy.bot.ui.theme.Motion
 import com.rixy.bot.ui.theme.Spacing
 import com.rixy.bot.ui.theme.SurfaceElevated
 import com.rixy.bot.ui.theme.TextTertiary
 
 private val UserBubbleShape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp)
 
-/** A message from the user: right-aligned elevated bubble. */
+/** A message from the user: right-aligned elevated bubble, entering with a liquid rise. */
 @Composable
-fun UserBubble(text: String, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.widthIn(max = 300.dp),
-        shape = UserBubbleShape,
-        color = SurfaceElevated,
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.md),
-        )
+fun UserBubble(text: String, modifier: Modifier = Modifier, animate: Boolean = true) {
+    val bubble: @Composable () -> Unit = {
+        Surface(
+            modifier = Modifier
+                .widthIn(max = 300.dp)
+                .animateContentSize(animationSpec = Motion.settle()),
+            shape = UserBubbleShape,
+            color = SurfaceElevated,
+        ) {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.md),
+            )
+        }
     }
+    if (animate) EnterAnimation(modifier = modifier) { bubble() } else Box(modifier) { bubble() }
 }
 
-/** A reply from Rixy: borderless, full-width, markdown-rendered. */
+/** A reply from Rixy: borderless, full-width, markdown-rendered, growing smoothly while streaming. */
 @Composable
 fun RixyBubble(
     text: String,
     modifier: Modifier = Modifier,
     streaming: Boolean = false,
+    animate: Boolean = true,
 ) {
-    Row(modifier = modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .padding(top = Spacing.xs)
-                .size(8.dp)
-                .background(MaterialTheme.colorScheme.primary, CircleShape),
-        )
-        Spacer(Modifier.size(Spacing.md))
-        Column(Modifier.weight(1f)) {
-            if (text.isEmpty() && streaming) {
-                TypingIndicator()
-            } else {
-                MarkdownText(text)
-                if (streaming) {
-                    StreamingCursor()
+    val content: @Composable () -> Unit = {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .padding(top = Spacing.xs)
+                    .size(8.dp)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+            )
+            Spacer(Modifier.size(Spacing.md))
+            Column(
+                Modifier
+                    .weight(1f)
+                    .animateContentSize(animationSpec = Motion.settle()),
+            ) {
+                if (text.isEmpty() && streaming) {
+                    TypingIndicator()
+                } else {
+                    MarkdownText(text)
+                    if (streaming) {
+                        StreamingCursor()
+                    }
                 }
             }
         }
     }
+    if (animate) EnterAnimation(modifier = modifier) { content() } else Box(modifier) { content() }
 }
 
 @Composable

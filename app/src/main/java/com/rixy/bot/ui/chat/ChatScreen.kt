@@ -1,6 +1,19 @@
 package com.rixy.bot.ui.chat
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,15 +60,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rixy.bot.R
 import com.rixy.bot.data.model.ChatMessageEntity
+import com.rixy.bot.ui.components.EnterAnimation
 import com.rixy.bot.ui.components.ErrorBanner
 import com.rixy.bot.ui.components.RixyBubble
 import com.rixy.bot.ui.components.UserBubble
 import com.rixy.bot.ui.theme.InputBarShape
+import com.rixy.bot.ui.theme.Motion
 import com.rixy.bot.ui.theme.Spacing
 import com.rixy.bot.ui.theme.Surface
 import com.rixy.bot.ui.theme.TextTertiary
@@ -114,19 +130,28 @@ fun ChatScreen(
         SnackbarHost(snackbarHostState)
 
         Box(modifier = Modifier.weight(1f)) {
-            if (messages.isEmpty() && streamingText == null && !isPlanning) {
-                ChatEmptyState(
-                    hasKey = hasKey,
-                    onOpenSettings = onOpenSettings,
-                    onSuggestion = { inputText = it },
-                )
-            } else {
-                MessageList(
-                    messages = messages,
-                    streamingText = streamingText,
-                    isPlanning = isPlanning,
-                    onPlanSave = viewModel::savePlanToTasks,
-                )
+            AnimatedContent(
+                targetState = messages.isEmpty() && streamingText == null && !isPlanning,
+                transitionSpec = {
+                    (fadeIn(tween(Motion.FADE_MS)) + scaleIn(initialScale = 0.985f, animationSpec = tween(Motion.FADE_MS)))
+                        .togetherWith(fadeOut(tween(Motion.FADE_MS / 2)))
+                },
+                label = "chat-content",
+            ) { isEmpty ->
+                if (isEmpty) {
+                    ChatEmptyState(
+                        hasKey = hasKey,
+                        onOpenSettings = onOpenSettings,
+                        onSuggestion = { inputText = it },
+                    )
+                } else {
+                    MessageList(
+                        messages = messages,
+                        streamingText = streamingText,
+                        isPlanning = isPlanning,
+                        onPlanSave = viewModel::savePlanToTasks,
+                    )
+                }
             }
         }
 
@@ -183,6 +208,9 @@ private fun MessageList(
     onPlanSave: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    // Only liquid-enter messages that arrive after this screen first renders;
+    // history loaded later (or scrolled back to) appears instantly.
+    val initialTopId = remember { messages.maxOfOrNull { it.id } ?: Long.MIN_VALUE }
     LaunchedEffect(messages.size, streamingText, isPlanning) {
         if (messages.isNotEmpty() || streamingText != null || isPlanning) {
             listState.animateScrollToItem(listState.layoutInfo.totalItemsCount)
@@ -195,19 +223,24 @@ private fun MessageList(
         verticalArrangement = Arrangement.spacedBy(Spacing.lg),
     ) {
         items(messages, key = { it.id }) { message ->
-            if (message.isFromUser) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    UserBubble(message.text)
+            val isNew = message.id > initialTopId
+            Box(modifier = Modifier.animateItem()) {
+                if (message.isFromUser) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        UserBubble(message.text, animate = isNew)
+                    }
+                } else if (message.planJson != null) {
+                    PlanCard(message.planJson, onPlanSave, animate = isNew)
+                } else {
+                    RixyBubble(message.text, animate = isNew)
                 }
-            } else if (message.planJson != null) {
-                PlanCard(message.planJson, onPlanSave)
-            } else {
-                RixyBubble(message.text)
             }
         }
         if (streamingText != null) {
             item(key = "streaming") {
-                RixyBubble(streamingText, streaming = true)
+                Box(modifier = Modifier.animateItem()) {
+                    RixyBubble(streamingText, streaming = true)
+                }
             }
         }
         if (isPlanning && streamingText == null) {
@@ -223,7 +256,7 @@ private fun MessageList(
 }
 
 @Composable
-private fun PlanCard(planJson: String, onPlanSave: (String) -> Unit) {
+private fun PlanCard(planJson: String, onPlanSave: (String) -> Unit, animate: Boolean = true) {
     val items = remember(planJson) {
         runCatching {
             val arr = JSONArray(planJson)
@@ -242,13 +275,10 @@ private fun PlanCard(planJson: String, onPlanSave: (String) -> Unit) {
             }
         }.getOrDefault(emptyList())
     }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = Spacing.xs),
-        verticalArrangement = Arrangement.spacedBy(Spacing.md),
-    ) {
-        items.forEach { (title, description, priority) ->
+    val card: @Composable (Int) -> Unit = { index ->
+        val (title, description, priority) = items[index]
+        val stagger = if (animate) index * Motion.STAGGER_MS else 0L
+        val content: @Composable () -> Unit = {
             Surface(
                 shape = MaterialTheme.shapes.medium,
                 color = MaterialTheme.colorScheme.surface,
@@ -276,6 +306,15 @@ private fun PlanCard(planJson: String, onPlanSave: (String) -> Unit) {
                 }
             }
         }
+        if (animate) EnterAnimation(staggerMs = stagger) { content() } else content()
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = Spacing.xs),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+    ) {
+        items.indices.forEach { index -> card(index) }
         OutlinedButton(
             onClick = { onPlanSave(planJson) },
             shape = MaterialTheme.shapes.small,
@@ -318,26 +357,32 @@ private fun ChatEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(
-            Icons.Filled.Chat,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(32.dp),
-        )
+        EnterAnimation {
+            Icon(
+                Icons.Filled.Chat,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp),
+            )
+        }
         Spacer(Modifier.height(Spacing.md))
-        Text(
-            stringResource(R.string.chat_empty_title),
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
+        EnterAnimation(staggerMs = Motion.STAGGER_MS) {
+            Text(
+                stringResource(R.string.chat_empty_title),
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
         Spacer(Modifier.height(Spacing.lg))
         if (!hasKey) {
-            ErrorBanner(
-                message = stringResource(R.string.chat_no_key_message),
-                action = stringResource(R.string.chat_no_key_action),
-                onAction = onOpenSettings,
-                modifier = Modifier.widthIn(max = 420.dp),
-            )
+            EnterAnimation(staggerMs = Motion.STAGGER_MS * 2) {
+                ErrorBanner(
+                    message = stringResource(R.string.chat_no_key_message),
+                    action = stringResource(R.string.chat_no_key_action),
+                    onAction = onOpenSettings,
+                    modifier = Modifier.widthIn(max = 420.dp),
+                )
+            }
             Spacer(Modifier.height(Spacing.huge))
         }
         Column(
@@ -349,22 +394,24 @@ private fun ChatEmptyState(
                 R.string.chat_suggestion_explain,
                 R.string.chat_suggestion_draft,
                 R.string.chat_suggestion_code,
-            ).forEach { res ->
+            ).forEachIndexed { index, res ->
                 val label = stringResource(res)
-                OutlinedButton(
-                    onClick = { onSuggestion(label) },
-                    shape = InputBarShape,
-                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        stringResource(res),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(vertical = Spacing.xs),
-                    )
+                EnterAnimation(offsetDp = 12, staggerMs = Motion.STAGGER_MS * (2 + index)) {
+                    OutlinedButton(
+                        onClick = { onSuggestion(label) },
+                        shape = InputBarShape,
+                        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = Spacing.xs),
+                        )
+                    }
                 }
             }
         }
@@ -382,24 +429,30 @@ private fun ChatInputBar(
     var planMode by remember { mutableStateOf(false) }
 
     Column(Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+        AnimatedVisibility(
+            visible = !isStreaming,
+            enter = expandVertically(tween(Motion.FADE_MS)) + fadeIn(tween(Motion.FADE_MS)),
+            exit = shrinkVertically(tween(Motion.FADE_MS / 2)) + fadeOut(tween(Motion.FADE_MS / 2)),
         ) {
-            Text(
-                stringResource(R.string.chat_plan_mode),
-                style = MaterialTheme.typography.labelMedium,
-                color = TextTertiary,
-            )
-            Switch(
-                checked = planMode,
-                onCheckedChange = { planMode = it },
-                enabled = !isStreaming,
-                colors = SwitchDefaults.colors(
-                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+            ) {
+                Text(
+                    stringResource(R.string.chat_plan_mode),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = TextTertiary,
+                )
+                Switch(
+                    checked = planMode,
+                    onCheckedChange = { planMode = it },
+                    enabled = !isStreaming,
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                )
+            }
         }
         Row(verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(
@@ -426,34 +479,58 @@ private fun ChatInputBar(
                 ),
             )
             Spacer(Modifier.size(Spacing.sm))
-            Surface(
-                shape = InputBarShape,
-                color = if (isStreaming || text.isNotBlank()) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.secondaryContainer
-                },
-                modifier = Modifier.size(56.dp),
-            ) {
-                IconButton(
-                    onClick = {
-                        if (isStreaming) onStop()
-                        else {
-                            val trimmed = text.trim()
-                            if (trimmed.isNotEmpty()) onSend(trimmed, planMode)
-                        }
-                    },
-                    enabled = isStreaming || text.isNotBlank(),
-                ) {
-                    Icon(
-                        if (isStreaming) Icons.Filled.StopCircle else Icons.AutoMirrored.Filled.Send,
-                        contentDescription = stringResource(
-                            if (isStreaming) R.string.chat_stop else R.string.chat_send
-                        ),
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
-            }
+            SendStopButton(
+                isStreaming = isStreaming,
+                enabled = text.isNotBlank(),
+                onSend = { onSend(text.trim(), planMode) },
+                onStop = onStop,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SendStopButton(
+    isStreaming: Boolean,
+    enabled: Boolean,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.92f else 1f,
+        animationSpec = Motion.Liquid,
+        label = "send-press",
+    )
+    val containerColor by animateColorAsState(
+        targetValue = if (isStreaming || enabled) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.secondaryContainer
+        },
+        animationSpec = tween(Motion.FADE_MS),
+        label = "send-color",
+    )
+    Surface(
+        shape = InputBarShape,
+        color = containerColor,
+        modifier = Modifier
+            .size(56.dp)
+            .scale(scale),
+    ) {
+        IconButton(
+            onClick = { if (isStreaming) onStop() else if (enabled) onSend() },
+            enabled = isStreaming || enabled,
+            interactionSource = interaction,
+        ) {
+            Icon(
+                if (isStreaming) Icons.Filled.StopCircle else Icons.AutoMirrored.Filled.Send,
+                contentDescription = stringResource(
+                    if (isStreaming) R.string.chat_stop else R.string.chat_send
+                ),
+                tint = MaterialTheme.colorScheme.onPrimary,
+            )
         }
     }
 }
