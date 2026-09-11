@@ -1,5 +1,7 @@
 package com.rixy.bot.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -79,6 +82,7 @@ fun RixyApp(secrets: SecretsStore) {
     val scope = rememberCoroutineScope()
     val chatViewModel: ChatViewModel = koinViewModel()
     val settingsViewModel: SettingsViewModel = koinViewModel()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -89,6 +93,20 @@ fun RixyApp(secrets: SecretsStore) {
 
     var renameTarget by remember { mutableStateOf<Long?>(null) }
     var deleteTarget by remember { mutableStateOf<Long?>(null) }
+    var showImport by remember { mutableStateOf(false) }
+    var importText by remember { mutableStateOf("") }
+
+    val importFilePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            runCatching {
+                importText = context.contentResolver.openInputStream(it)?.use { stream ->
+                    stream.readBytes().toString(Charsets.UTF_8)
+                }.orEmpty()
+            }
+        }
+    }
 
     fun closeDrawer() {
         scope.launch { drawerState.close() }
@@ -162,6 +180,20 @@ fun RixyApp(secrets: SecretsStore) {
 
                     Spacer(Modifier.weight(1f))
                     DrawerLink(
+                        icon = {
+                            Icon(
+                                Icons.Filled.UploadFile,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        label = stringResource(R.string.import_conversation),
+                        onClick = {
+                            closeDrawer()
+                            showImport = true
+                        },
+                    )
+                    DrawerLink(
                         icon = { Icon(Icons.Filled.Checklist, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                         label = stringResource(R.string.drawer_tasks),
                         onClick = {
@@ -233,6 +265,70 @@ fun RixyApp(secrets: SecretsStore) {
                 )
             }
         }
+    }
+
+    if (showImport) {
+        val parsed = remember(importText) {
+            com.rixy.bot.util.ConversationImportParser.parse(importText)
+        }
+        AlertDialog(
+            onDismissRequest = { showImport = false },
+            title = { Text(stringResource(R.string.import_conversation)) },
+            text = {
+                Column {
+                    Text(
+                        stringResource(R.string.import_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextTertiary,
+                    )
+                    Spacer(Modifier.height(Spacing.md))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = importText,
+                        onValueChange = { importText = it },
+                        minLines = 6,
+                        maxLines = 10,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (parsed.isNotEmpty()) {
+                        Spacer(Modifier.height(Spacing.sm))
+                        Text(
+                            stringResource(
+                                R.string.import_preview,
+                                parsed.count { it.isFromUser },
+                                parsed.count { !it.isFromUser },
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    TextButton(onClick = {
+                        importFilePicker.launch(arrayOf("text/plain", "text/markdown", "application/octet-stream"))
+                    }) {
+                        Text(stringResource(R.string.import_pick_file))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = parsed.isNotEmpty(),
+                    onClick = {
+                        chatViewModel.importConversation(parsed)
+                        showImport = false
+                        importText = ""
+                        navController.navigate(Routes.CHAT) {
+                            popUpTo(Routes.CHAT)
+                            launchSingleTop = true
+                        }
+                    },
+                ) { Text(stringResource(R.string.import_action)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImport = false; importText = "" }) {
+                    Text(stringResource(R.string.chat_dismiss))
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+        )
     }
 
     renameTarget?.let { chatId ->

@@ -4,12 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.rixy.bot.data.model.ChatMessageEntity
 import com.rixy.bot.data.model.PlannedTaskEntity
+import com.rixy.bot.data.prefs.ImageStore
 import com.rixy.bot.data.prefs.SecretsStore
 import com.rixy.bot.data.repo.ChatRepository
 import com.rixy.bot.network.ChatTurn
 import com.rixy.bot.network.GeminiApiService
 import com.rixy.bot.network.GeminiException
 import com.rixy.bot.network.PlanItem
+import com.rixy.bot.network.Source
+import com.rixy.bot.network.StreamEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -24,17 +27,26 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 sealed interface ChatUiEvent {
     data class Error(val message: String, val canRetry: Boolean) : ChatUiEvent
     data object PlanSaved : ChatUiEvent
     data class PlanFailed(val message: String) : ChatUiEvent
+    data class ImageSavedToGallery(val success: Boolean) : ChatUiEvent
+    data class Imported(val count: Int) : ChatUiEvent
 }
+
+/** What the input bar should do with the next message. */
+enum class SendMode { CHAT, PLAN, IMAGE }
 
 class ChatViewModel(
     private val repository: ChatRepository,
     private val gemini: GeminiApiService,
     private val secrets: SecretsStore,
+    val imageStore: ImageStore,
 ) : ViewModel() {
 
     val chats = repository.chats.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -56,6 +68,12 @@ class ChatViewModel(
 
     private val _isPlanning = MutableStateFlow(false)
     val isPlanning = _isPlanning.asStateFlow()
+
+    private val _isGeneratingImage = MutableStateFlow(false)
+    val isGeneratingImage = _isGeneratingImage.asStateFlow()
+
+    private val _attachedImagePath = MutableStateFlow<String?>(null)
+    val attachedImagePath = _attachedImagePath.asStateFlow()
 
     private val _events = MutableSharedFlow<ChatUiEvent>(extraBufferCapacity = 8)
     val events = _events.asSharedFlow()
@@ -88,16 +106,30 @@ class ChatViewModel(
         viewModelScope.launch { runCatching { repository.renameChat(id, trimmed) } }
     }
 
-    fun sendMessage(rawText: String) {
+    fun attachImage(path: String?) {
+        _attachedImagePath.value = path
+    }
+
+    /** Entry point from the input bar. */
+    fun sendMessage(rawText: String, mode: SendMode, webGrounded: Boolean) {
+        when (mode) {
+            SendMode.PLAN -> requestPlan(rawText)
+            SendMode.IMAGE -> requestImage(rawText)
+            SendMode.CHAT -> sendChat(rawText, webGrounded)
+        }
+    }
+
+    private fun sendChat(rawText: String, webGrounded: Boolean) {
         val prompt = rawText.trim()
-        if (prompt.isEmpty() || _isStreaming.value || _isPlanning.value) return
+        val attachment = _attachedImagePath.value
+        if ((prompt.isEmpty() && attachment == null) || busy()) return
+        _attachedImagePath.value = null
 
         viewModelScope.launch {
-            val chatId = _selectedChatId.value
-                ?: repository.createChat(deriveTitle(prompt), System.currentTimeMillis())
-                    .also { _selectedChatId.value = it }
-
-            runCatching { repository.addMessage(chatId, isFromUser = true, text = prompt) }
+            val chatId = ensureChat(prompt.ifEmpty { "Image" })
+            runCatching {
+                repository.addMessage(chatId, isFromUser = true, text = prompt, imagePath = attachment)
+            }
 
             val apiKey = secrets.resolveApiKey()
             val model = secrets.geminiModel
@@ -106,26 +138,32 @@ class ChatViewModel(
                 return@launch
             }
 
-            val history = runCatching {
-                repository.getHistory(chatId).takeLast(HISTORY_LIMIT).map {
-                    ChatTurn(isFromUser = it.isFromUser, text = it.text)
-                }
-            }.getOrDefault(emptyList())
-
+            val history = buildHistory(chatId, attachment)
             _isStreaming.value = true
             _streamingText.value = ""
             streamingChatId = chatId
             val buffer = StringBuilder()
+            val sources = mutableListOf<Source>()
 
             streamJob = launch {
                 try {
-                    gemini.streamChat(history, apiKey, model).collect { delta ->
-                        buffer.append(delta)
-                        _streamingText.value = buffer.toString()
+                    gemini.streamChat(history, apiKey, model, webGrounded).collect { event ->
+                        when (event) {
+                            is StreamEvent.Delta -> {
+                                buffer.append(event.text)
+                                _streamingText.value = buffer.toString()
+                            }
+                            is StreamEvent.Sources -> sources += event.sources
+                        }
                     }
                     val finalText = buffer.toString()
-                    if (finalText.isNotBlank()) {
-                        repository.addMessage(chatId, isFromUser = false, text = finalText)
+                    if (finalText.isNotBlank() || attachment != null) {
+                        repository.addMessage(
+                            chatId,
+                            isFromUser = false,
+                            text = finalText,
+                            sourcesJson = sourcesToJson(sources),
+                        )
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -133,7 +171,12 @@ class ChatViewModel(
                     val partial = buffer.toString()
                     if (partial.isNotBlank()) {
                         runCatching {
-                            repository.addMessage(chatId, isFromUser = false, text = "$partial\n\n*${STOPPED_NOTE}*")
+                            repository.addMessage(
+                                chatId,
+                                isFromUser = false,
+                                text = "$partial\n\n*${STOPPED_NOTE}*",
+                                sourcesJson = sourcesToJson(sources),
+                            )
                         }
                     } else {
                         _events.emit(ChatUiEvent.Error(userMessage(e), canRetry = true))
@@ -147,16 +190,41 @@ class ChatViewModel(
         }
     }
 
-    /** Stops generation and keeps whatever streamed so far. */
-    fun stopStreaming() {
-        val chatId = streamingChatId
-        val partial = _streamingText.value
-        streamJob?.cancel()
-        if (chatId != null && !partial.isNullOrBlank()) {
-            viewModelScope.launch {
-                runCatching {
-                    repository.addMessage(chatId, isFromUser = false, text = "$partial\n\n*${STOPPED_NOTE}*")
-                }
+    /** Image mode: generate an image for the prompt (an attachment acts as a style reference). */
+    private fun requestImage(rawText: String) {
+        val prompt = rawText.trim()
+        val attachment = _attachedImagePath.value
+        if (prompt.isEmpty() && attachment == null) return
+        if (busy()) return
+        _attachedImagePath.value = null
+
+        viewModelScope.launch {
+            val chatId = ensureChat(prompt.ifEmpty { "Image" })
+            runCatching {
+                repository.addMessage(chatId, isFromUser = true, text = prompt, imagePath = attachment)
+            }
+
+            val apiKey = secrets.resolveApiKey() ?: run {
+                _events.emit(ChatUiEvent.Error(NO_KEY_MESSAGE, canRetry = false))
+                return@launch
+            }
+
+            _isGeneratingImage.value = true
+            try {
+                val image = gemini.generateImage(prompt, apiKey)
+                val savedPath = imageStore.saveBase64(image.base64, image.mimeType)
+                repository.addMessage(
+                    chatId,
+                    isFromUser = false,
+                    text = image.caption.ifEmpty { "Generated image" },
+                    imagePath = savedPath,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _events.emit(ChatUiEvent.Error(userMessage(e), canRetry = false))
+            } finally {
+                _isGeneratingImage.value = false
             }
         }
     }
@@ -164,13 +232,10 @@ class ChatViewModel(
     /** Plan mode: decompose a goal into tasks, rendered as a plan card in the chat. */
     fun requestPlan(rawGoal: String) {
         val goal = rawGoal.trim()
-        if (goal.isEmpty() || _isStreaming.value || _isPlanning.value) return
+        if (goal.isEmpty() || busy()) return
 
         viewModelScope.launch {
-            val chatId = _selectedChatId.value
-                ?: repository.createChat(deriveTitle(goal), System.currentTimeMillis())
-                    .also { _selectedChatId.value = it }
-
+            val chatId = ensureChat(goal)
             runCatching { repository.addMessage(chatId, isFromUser = true, text = PLAN_PREFIX + goal) }
 
             val apiKey = secrets.resolveApiKey()
@@ -237,6 +302,81 @@ class ChatViewModel(
             }
         }
     }
+
+    fun saveImageToGallery(path: String) {
+        viewModelScope.launch {
+            val ok = runCatching {
+                imageStore.saveToGallery(path, "rixy_${System.currentTimeMillis()}")
+            }.getOrDefault(false)
+            _events.emit(ChatUiEvent.ImageSavedToGallery(ok))
+        }
+    }
+
+    /** Imports a parsed conversation as a new chat and selects it. */
+    fun importConversation(parsed: List<com.rixy.bot.util.ConversationImportParser.ParsedMessage>) {
+        if (parsed.isEmpty()) return
+        viewModelScope.launch {
+            val title = "Imported · " + SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
+                .format(Date())
+            runCatching {
+                val chatId = repository.createChat(title, System.currentTimeMillis())
+                repository.importConversation(chatId, parsed.map { it.isFromUser to it.text })
+                _selectedChatId.value = chatId
+                _events.emit(ChatUiEvent.Imported(parsed.size))
+            }
+        }
+    }
+
+    /** Stops generation and keeps whatever streamed so far. */
+    fun stopStreaming() {
+        val chatId = streamingChatId
+        val partial = _streamingText.value
+        streamJob?.cancel()
+        if (chatId != null && !partial.isNullOrBlank()) {
+            viewModelScope.launch {
+                runCatching {
+                    repository.addMessage(chatId, isFromUser = false, text = "$partial\n\n*${STOPPED_NOTE}*")
+                }
+            }
+        }
+    }
+
+    private fun busy() = _isStreaming.value || _isPlanning.value || _isGeneratingImage.value
+
+    private suspend fun ensureChat(firstPrompt: String): Long =
+        _selectedChatId.value
+            ?: repository.createChat(deriveTitle(firstPrompt), System.currentTimeMillis())
+                .also { _selectedChatId.value = it }
+
+    /**
+     * Builds API history: the newest message keeps its actual image bytes; older
+     * image messages degrade to a "[image attached]" text placeholder to keep
+     * request size predictable.
+     */
+    private suspend fun buildHistory(chatId: Long, currentAttachment: String?): List<ChatTurn> {
+        val history = runCatching { repository.getHistory(chatId) }.getOrDefault(emptyList())
+        return history.takeLast(HISTORY_LIMIT).mapIndexed { index, msg ->
+            val isLast = index == history.takeLast(HISTORY_LIMIT).lastIndex
+            val imagePath = msg.imagePath
+            val carriesImage = isLast && msg.isFromUser && imagePath != null && imagePath == currentAttachment
+            ChatTurn(
+                isFromUser = msg.isFromUser,
+                text = when {
+                    imagePath != null && !carriesImage && msg.text.isEmpty() -> "[image attached]"
+                    imagePath != null && !carriesImage -> msg.text + "\n[image attached]"
+                    else -> msg.text
+                },
+                imageBase64 = if (carriesImage) imageStore.toBase64(imagePath!!) else null,
+                imageMimeType = if (carriesImage) imageStore.mimeTypeFor(imagePath!!) else null,
+            )
+        }
+    }
+
+    private fun sourcesToJson(sources: List<Source>): String? =
+        if (sources.isEmpty()) null
+        else JSONArray().apply {
+            sources.forEach { put(JSONObject().put("title", it.title).put("uri", it.uri)) }
+        }.toString()
 
     private fun userMessage(e: Exception): String = when (e) {
         is GeminiException.Auth -> "Your API key was rejected. Check it in Settings."

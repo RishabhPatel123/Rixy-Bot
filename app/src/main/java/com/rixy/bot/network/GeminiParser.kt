@@ -44,6 +44,67 @@ object GeminiParser {
     }
 
     /**
+     * Extracts web-grounding sources from a stream chunk:
+     * candidates[0].groundingMetadata.groundingChunks[].web.{title, uri}.
+     * Returns an empty list when the chunk carries none.
+     */
+    fun extractSources(dataJson: String): List<Source> {
+        return try {
+            val chunks = JSONObject(dataJson)
+                .optJSONArray("candidates")
+                ?.optJSONObject(0)
+                ?.optJSONObject("groundingMetadata")
+                ?.optJSONArray("groundingChunks")
+                ?: return emptyList()
+            val sources = mutableListOf<Source>()
+            for (i in 0 until chunks.length()) {
+                val web = chunks.optJSONObject(i)?.optJSONObject("web") ?: continue
+                val uri = web.optString("uri")
+                if (uri.isNotEmpty()) {
+                    sources += Source(title = web.optString("title").ifEmpty { uri }, uri = uri)
+                }
+            }
+            sources
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** Extracts the first inline image plus any text as caption from a generateContent body. */
+    fun extractImageAndCaption(body: String): GeneratedImage {
+        return try {
+            val parts = JSONObject(body)
+                .optJSONArray("candidates")
+                ?.optJSONObject(0)
+                ?.optJSONObject("content")
+                ?.optJSONArray("parts")
+                ?: throw GeminiException.Parse()
+            var image: GeneratedImage? = null
+            val caption = StringBuilder()
+            for (i in 0 until parts.length()) {
+                val part = parts.optJSONObject(i) ?: continue
+                val inline = part.optJSONObject("inlineData")
+                    ?: part.optJSONObject("inline_data") // snake_case variant
+                if (inline != null && image == null) {
+                    image = GeneratedImage(
+                        base64 = inline.optString("data"),
+                        mimeType = inline.optString("mimeType").ifEmpty { inline.optString("mime_type") }.ifEmpty { "image/png" },
+                        caption = "",
+                    )
+                } else {
+                    caption.append(part.optString("text"))
+                }
+            }
+            image?.copy(caption = caption.toString().trim())
+                ?: throw GeminiException.Parse(IllegalStateException("no image in response"))
+        } catch (e: GeminiException) {
+            throw e
+        } catch (e: Exception) {
+            throw GeminiException.Parse(e)
+        }
+    }
+
+    /**
      * Parses a plan out of a model reply. Tolerates markdown code fences and
      * leading prose; expects a JSON array of {title, description, priority}.
      */

@@ -14,7 +14,11 @@ data class ChatEntity(
     val lastMessageAt: Long,
 )
 
-/** One message in a chat. [planJson], when present, holds a JSON array of planned tasks. */
+/**
+ * One message in a chat. [planJson], when present, holds a JSON array of planned tasks;
+ * [imagePath] points at a local file (user attachment or generated image);
+ * [sourcesJson] holds web-grounding sources as [{title, uri}].
+ */
 @Entity(
     tableName = "messages",
     indices = [Index("chatId")],
@@ -26,6 +30,8 @@ data class ChatMessageEntity(
     val text: String,
     val timestamp: Long,
     val planJson: String? = null,
+    val imagePath: String? = null,
+    val sourcesJson: String? = null,
 )
 
 /** A task produced by Plan mode and saved by the user. */

@@ -26,8 +26,24 @@
     <string name="chat_error_title">Rixy couldn\'t reply</string>
     <string name="chat_retry">Retry</string>
     <string name="chat_dismiss">Dismiss</string>
-    <string name="chat_plan_mode">Plan mode</string>
+    <string name="chat_plan_mode">Plan</string>
+    <string name="chat_plan_hint">Describe a goal to plan…</string>
     <string name="chat_plan_generating">Planning…</string>
+    <string name="chat_image_mode">Image</string>
+    <string name="chat_image_hint">Describe an image to generate…</string>
+    <string name="chat_web_mode">Web</string>
+    <string name="chat_attach_image">Attach an image</string>
+    <string name="chat_attachment_attached">Image attached</string>
+    <string name="chat_attachment_remove">Remove attachment</string>
+    <string name="chat_image_generating">Painting your image…</string>
+    <string name="chat_save_image">Save image to gallery</string>
+    <string name="chat_image_saved">Saved to gallery</string>
+    <string name="chat_image_save_failed">Couldn\'t save to gallery on this Android version</string>
+    <string name="chat_sources">Sources</string>
+    <string name="chat_speak">Read aloud</string>
+    <string name="chat_speak_to_text">Speak your message</string>
+    <string name="chat_listening">Listening… say something</string>
+    <string name="chat_use_transcript">Use text</string>
     <string name="chat_plan_save_tasks">Save to Tasks</string>
     <string name="chat_plan_saved">Saved to Tasks</string>
     <string name="chat_copy">Copy</string>
@@ -77,6 +93,14 @@
     <string name="task_priority_high">High</string>
     <string name="task_priority_medium">Medium</string>
     <string name="task_priority_low">Low</string>
+
+    <!-- Import -->
+    <string name="import_conversation">Import conversation</string>
+    <string name="import_hint">Paste a conversation with speaker prefixes like “You:” and “Assistant:”, or pick a .txt/.md file. Unprefixed lines join the previous message.</string>
+    <string name="import_preview">Found %1$d of your messages and %2$d assistant messages</string>
+    <string name="import_pick_file">Pick a text file instead</string>
+    <string name="import_action">Import</string>
+    <string name="import_success">Imported %1$d messages</string>
 
     <!-- Errors -->
     <string name="error_no_key">No API key configured.</string>

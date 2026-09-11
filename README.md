@@ -2,19 +2,23 @@
 
 A Grok-style, chat-first Android assistant powered by Google Gemini. Bring your own API key — your conversations stay on your phone and are sent only to Gemini.
 
-Rixy streams replies in real time, renders markdown (bold, lists, fenced code blocks with copy buttons), and includes a **Plan mode** that decomposes any goal into prioritized, actionable tasks you can save to a built-in task list.
+Rixy streams replies in real time, generates images, understands photos you attach, answers with live web sources, speaks and listens, and can plan any goal into actionable tasks.
 
 ## ✨ Features
 
-- **Chat-first UI** — dark, minimal, monochrome design with a navigation drawer for chat history; message bubbles, streaming responses with a live cursor, and a stop button.
+- **Chat-first UI** — dark, minimal, monochrome design with a navigation drawer for chat history; message bubbles, streaming responses with a live cursor, liquid-motion animations, and a stop button.
 - **Streaming Gemini chat** — real-time token streaming (`streamGenerateContent` SSE) with multi-turn conversation history, not canned replies.
+- **Image generation** — flip to Image mode, describe a picture, and Rixy generates it (Gemini image model) with a save-to-gallery button. Attach a photo to use it as a reference.
+- **Photo analysis** — attach an image from your library and ask about it; the picture rides along in the multimodal request.
+- **Web-grounded answers** — toggle Web mode and replies cite their Google Search sources as tappable chips.
+- **Voice** — tap the mic to speak your message (Android speech recognition), tap the speaker on any reply to hear it read aloud (TTS).
+- **Plan mode** — describe a goal and get 3–6 prioritized sub-task cards; save them to the Tasks screen with one tap.
+- **Import conversations** — paste or pick a ChatGPT/Grok/Gemini transcript and continue it in Rixy.
 - **Markdown rendering** — bold/italic, inline code, bullet and numbered lists, headings, and fenced code blocks with one-tap copy.
-- **Plan mode** — toggle it on, describe a goal, and Rixy returns 3–6 prioritized sub-tasks as cards; save them to the Tasks screen with one tap.
-- **Tasks screen** — planned tasks with priority chips, done/dismiss/reopen states, and delete.
-- **First-run key onboarding** — welcome screen with a live "test key" button and a link to get a free key; skippable with an in-chat banner reminder.
-- **Chat management** — create, rename, delete chats; delete-all with confirmation.
+- **First-run key onboarding** — welcome screen with a live "test key" button; skippable with an in-chat banner reminder.
 - **Private by design** — the API key is stored in [EncryptedSharedPreferences](https://developer.android.com/privacy-and-security/cryptography) (Android Keystore), backups are disabled, and there is no analytics, telemetry, or third-party network call. The only network peer is `generativelanguage.googleapis.com`.
-- **Model picker** — switch between Gemini models (2.5 Flash/Pro, 2.0 Flash, and more) at runtime.
+
+**Permissions:** Internet (Gemini API) and microphone (voice input, requested at first use, optional). Photo picking uses the privacy-friendly system photo picker — no photo library permission.
 
 ## 🛠 Tech stack
 

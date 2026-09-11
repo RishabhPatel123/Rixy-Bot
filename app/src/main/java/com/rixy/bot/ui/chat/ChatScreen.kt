@@ -1,5 +1,14 @@
 package com.rixy.bot.ui.chat
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -12,6 +21,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -32,15 +42,24 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.StopCircle
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -52,23 +71,31 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rixy.bot.R
 import com.rixy.bot.data.model.ChatMessageEntity
 import com.rixy.bot.ui.components.EnterAnimation
 import com.rixy.bot.ui.components.ErrorBanner
 import com.rixy.bot.ui.components.RixyBubble
+import com.rixy.bot.ui.components.TypingIndicator
 import com.rixy.bot.ui.components.UserBubble
 import com.rixy.bot.ui.theme.InputBarShape
 import com.rixy.bot.ui.theme.Motion
@@ -78,6 +105,8 @@ import com.rixy.bot.ui.theme.TextTertiary
 import com.rixy.bot.ui.theme.Warning
 import com.rixy.bot.ui.viewmodel.ChatUiEvent
 import com.rixy.bot.ui.viewmodel.ChatViewModel
+import com.rixy.bot.ui.viewmodel.SendMode
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 
 @Composable
@@ -88,13 +117,77 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     viewModel: ChatViewModel,
 ) {
+    val context = LocalContext.current
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val streamingText by viewModel.streamingText.collectAsStateWithLifecycle()
     val isStreaming by viewModel.isStreaming.collectAsStateWithLifecycle()
     val isPlanning by viewModel.isPlanning.collectAsStateWithLifecycle()
+    val isGeneratingImage by viewModel.isGeneratingImage.collectAsStateWithLifecycle()
+    val attachedImagePath by viewModel.attachedImagePath.collectAsStateWithLifecycle()
     val hasKey = viewModel.hasApiKey
     val snackbarHostState = remember { SnackbarHostState() }
     var inputText by remember { mutableStateOf("") }
+
+    // ---- Text-to-speech ----
+    var speakingMessageId by remember { mutableStateOf<Long?>(null) }
+    val ttsReady = remember { mutableStateOf(false) }
+    val tts = remember {
+        var engine: TextToSpeech? = null
+        engine = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                engine?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
+                    override fun onDone(utteranceId: String?) {
+                        utteranceId?.toLongOrNull()?.let { id -> speakingMessageId = null }
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) {
+                        utteranceId?.toLongOrNull()?.let { speakingMessageId = null }
+                    }
+                })
+                ttsReady.value = true
+            }
+        }
+        engine
+    }
+    DisposableEffect(Unit) { onDispose { tts.shutdown() } }
+    val speak: (ChatMessageEntity) -> Unit = { message ->
+        val engine = tts
+        if (speakingMessageId == message.id) {
+            engine.stop()
+            speakingMessageId = null
+        } else {
+            speakingMessageId = message.id
+            engine.speak(
+                message.text,
+                TextToSpeech.QUEUE_FLUSH,
+                null,
+                message.id.toString(),
+            )
+        }
+    }
+
+    // ---- Speech-to-text ----
+    var showListening by remember { mutableStateOf(false) }
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) showListening = true }
+    val onMicTap = {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) showListening = true else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    // ---- Image attachment ----
+    val pickImage = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        uri?.let { viewModel.attachImage(viewModel.imageStore.copyFromUri(it)) }
+    }
+
+    val gallerySavedMessage = stringResource(R.string.chat_image_saved)
+    val gallerySaveFailedMessage = stringResource(R.string.chat_image_save_failed)
+    val importedMessage = stringResource(R.string.import_success)
     val planSavedMessage = stringResource(R.string.chat_plan_saved)
 
     LaunchedEffect(Unit) {
@@ -111,13 +204,23 @@ fun ChatScreen(
                 is ChatUiEvent.PlanFailed ->
                     snackbarHostState.showSnackbar(event.message, duration = SnackbarDuration.Short)
                 ChatUiEvent.PlanSaved ->
+                    snackbarHostState.showSnackbar(planSavedMessage, duration = SnackbarDuration.Short)
+                is ChatUiEvent.ImageSavedToGallery ->
                     snackbarHostState.showSnackbar(
-                        planSavedMessage,
+                        if (event.success) gallerySavedMessage else gallerySaveFailedMessage,
+                        duration = SnackbarDuration.Short,
+                    )
+                is ChatUiEvent.Imported ->
+                    snackbarHostState.showSnackbar(
+                        importedMessage.format(event.count),
                         duration = SnackbarDuration.Short,
                     )
             }
         }
     }
+
+    val busy = isStreaming || isPlanning || isGeneratingImage
+    val listIsEmpty = messages.isEmpty() && streamingText == null && !isPlanning && !isGeneratingImage
 
     Column(
         modifier = Modifier
@@ -131,7 +234,7 @@ fun ChatScreen(
 
         Box(modifier = Modifier.weight(1f)) {
             AnimatedContent(
-                targetState = messages.isEmpty() && streamingText == null && !isPlanning,
+                targetState = listIsEmpty,
                 transitionSpec = {
                     (fadeIn(tween(Motion.FADE_MS)) + scaleIn(initialScale = 0.985f, animationSpec = tween(Motion.FADE_MS)))
                         .togetherWith(fadeOut(tween(Motion.FADE_MS / 2)))
@@ -149,7 +252,12 @@ fun ChatScreen(
                         messages = messages,
                         streamingText = streamingText,
                         isPlanning = isPlanning,
+                        isGeneratingImage = isGeneratingImage,
+                        imageStore = viewModel.imageStore,
+                        speakingMessageId = speakingMessageId,
+                        onSpeak = speak,
                         onPlanSave = viewModel::savePlanToTasks,
+                        onSaveImage = viewModel::saveImageToGallery,
                     )
                 }
             }
@@ -158,12 +266,30 @@ fun ChatScreen(
         ChatInputBar(
             text = inputText,
             onTextChange = { inputText = it },
-            isStreaming = isStreaming || isPlanning,
-            onSend = { value, planMode ->
-                if (planMode) viewModel.requestPlan(value) else viewModel.sendMessage(value)
+            attachmentPath = attachedImagePath,
+            onAttach = {
+                pickImage.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            onRemoveAttachment = { viewModel.attachImage(null) },
+            onMic = onMicTap,
+            isBusy = busy,
+            onSend = { value, mode, webGrounded ->
+                viewModel.sendMessage(value, mode, webGrounded)
                 inputText = ""
             },
             onStop = viewModel::stopStreaming,
+        )
+    }
+
+    if (showListening) {
+        ListeningSheet(
+            onDismiss = { showListening = false },
+            onConfirm = { transcript ->
+                showListening = false
+                if (transcript.isNotBlank()) inputText = transcript
+            },
         )
     }
 }
@@ -205,14 +331,17 @@ private fun MessageList(
     messages: List<ChatMessageEntity>,
     streamingText: String?,
     isPlanning: Boolean,
+    isGeneratingImage: Boolean,
+    imageStore: com.rixy.bot.data.prefs.ImageStore,
+    speakingMessageId: Long?,
+    onSpeak: (ChatMessageEntity) -> Unit,
     onPlanSave: (String) -> Unit,
+    onSaveImage: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
-    // Only liquid-enter messages that arrive after this screen first renders;
-    // history loaded later (or scrolled back to) appears instantly.
     val initialTopId = remember { messages.maxOfOrNull { it.id } ?: Long.MIN_VALUE }
-    LaunchedEffect(messages.size, streamingText, isPlanning) {
-        if (messages.isNotEmpty() || streamingText != null || isPlanning) {
+    LaunchedEffect(messages.size, streamingText, isPlanning, isGeneratingImage) {
+        if (messages.isNotEmpty() || streamingText != null || isPlanning || isGeneratingImage) {
             listState.animateScrollToItem(listState.layoutInfo.totalItemsCount)
         }
     }
@@ -226,13 +355,30 @@ private fun MessageList(
             val isNew = message.id > initialTopId
             Box(modifier = Modifier.animateItem()) {
                 if (message.isFromUser) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        UserBubble(message.text, animate = isNew)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        UserBubble(
+                            text = message.text,
+                            imagePath = message.imagePath,
+                            imageStore = imageStore,
+                            animate = isNew,
+                        )
                     }
                 } else if (message.planJson != null) {
                     PlanCard(message.planJson, onPlanSave, animate = isNew)
                 } else {
-                    RixyBubble(message.text, animate = isNew)
+                    RixyBubble(
+                        text = message.text,
+                        imagePath = message.imagePath,
+                        sourcesJson = message.sourcesJson,
+                        imageStore = imageStore,
+                        animate = isNew,
+                        speaking = speakingMessageId == message.id,
+                        onSpeak = { onSpeak(message) },
+                        onSaveImage = message.imagePath?.let { path -> { onSaveImage(path) } },
+                    )
                 }
             }
         }
@@ -250,6 +396,21 @@ private fun MessageList(
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextTertiary,
                 )
+            }
+        }
+        if (isGeneratingImage) {
+            item(key = "generating-image") {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                ) {
+                    TypingIndicator()
+                    Text(
+                        stringResource(R.string.chat_image_generating),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextTertiary,
+                    )
+                }
             }
         }
     }
@@ -275,46 +436,45 @@ private fun PlanCard(planJson: String, onPlanSave: (String) -> Unit, animate: Bo
             }
         }.getOrDefault(emptyList())
     }
-    val card: @Composable (Int) -> Unit = { index ->
-        val (title, description, priority) = items[index]
-        val stagger = if (animate) index * Motion.STAGGER_MS else 0L
-        val content: @Composable () -> Unit = {
-            Surface(
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(Spacing.lg)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            title,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.weight(1f),
-                        )
-                        PriorityChip(priority)
-                    }
-                    if (description.isNotEmpty()) {
-                        Spacer(Modifier.height(Spacing.xs))
-                        Text(
-                            description,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
-        if (animate) EnterAnimation(staggerMs = stagger) { content() } else content()
-    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = Spacing.xs),
         verticalArrangement = Arrangement.spacedBy(Spacing.md),
     ) {
-        items.indices.forEach { index -> card(index) }
+        items.indices.forEach { index ->
+            val (title, description, priority) = items[index]
+            val stagger = if (animate) index * Motion.STAGGER_MS else 0L
+            val content: @Composable () -> Unit = {
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(Spacing.lg)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.weight(1f),
+                            )
+                            PriorityChip(priority)
+                        }
+                        if (description.isNotEmpty()) {
+                            Spacer(Modifier.height(Spacing.xs))
+                            Text(
+                                description,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+            if (animate) EnterAnimation(staggerMs = stagger) { content() } else content()
+        }
         OutlinedButton(
             onClick = { onPlanSave(planJson) },
             shape = MaterialTheme.shapes.small,
@@ -422,45 +582,100 @@ private fun ChatEmptyState(
 private fun ChatInputBar(
     text: String,
     onTextChange: (String) -> Unit,
-    isStreaming: Boolean,
-    onSend: (String, Boolean) -> Unit,
+    attachmentPath: String?,
+    onAttach: () -> Unit,
+    onRemoveAttachment: () -> Unit,
+    onMic: () -> Unit,
+    isBusy: Boolean,
+    onSend: (String, SendMode, Boolean) -> Unit,
     onStop: () -> Unit,
 ) {
-    var planMode by remember { mutableStateOf(false) }
+    var mode by remember { mutableStateOf(SendMode.CHAT) }
+    var webGrounded by remember { mutableStateOf(false) }
 
     Column(Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)) {
         AnimatedVisibility(
-            visible = !isStreaming,
+            visible = !isBusy,
             enter = expandVertically(tween(Motion.FADE_MS)) + fadeIn(tween(Motion.FADE_MS)),
             exit = shrinkVertically(tween(Motion.FADE_MS / 2)) + fadeOut(tween(Motion.FADE_MS / 2)),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
-                Text(
-                    stringResource(R.string.chat_plan_mode),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextTertiary,
+                ModeChip(
+                    label = stringResource(R.string.chat_plan_mode),
+                    selected = mode == SendMode.PLAN,
+                    onClick = { mode = if (mode == SendMode.PLAN) SendMode.CHAT else SendMode.PLAN },
                 )
-                Switch(
-                    checked = planMode,
-                    onCheckedChange = { planMode = it },
-                    enabled = !isStreaming,
-                    colors = SwitchDefaults.colors(
-                        checkedTrackColor = MaterialTheme.colorScheme.primary,
-                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
+                ModeChip(
+                    label = stringResource(R.string.chat_image_mode),
+                    selected = mode == SendMode.IMAGE,
+                    onClick = { mode = if (mode == SendMode.IMAGE) SendMode.CHAT else SendMode.IMAGE },
+                )
+                Spacer(Modifier.weight(1f))
+                ModeChip(
+                    label = stringResource(R.string.chat_web_mode),
+                    selected = webGrounded,
+                    onClick = { webGrounded = !webGrounded },
                 )
             }
         }
+
+        AnimatedVisibility(
+            visible = attachmentPath != null,
+            enter = expandVertically(tween(Motion.FADE_MS)) + fadeIn(tween(Motion.FADE_MS)),
+            exit = shrinkVertically(tween(Motion.FADE_MS / 2)) + fadeOut(tween(Motion.FADE_MS / 2)),
+        ) {
+            if (attachmentPath != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    modifier = Modifier.padding(vertical = Spacing.xs),
+                ) {
+                    AttachmentThumbnail(attachmentPath)
+                    Text(
+                        stringResource(R.string.chat_attachment_attached),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextTertiary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = onRemoveAttachment, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = stringResource(R.string.chat_attachment_remove),
+                            tint = TextTertiary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+        }
+
         Row(verticalAlignment = Alignment.Bottom) {
+            IconButton(
+                onClick = onAttach,
+                enabled = !isBusy,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = stringResource(R.string.chat_attach_image),
+                    tint = TextTertiary,
+                )
+            }
             OutlinedTextField(
                 value = text,
                 onValueChange = onTextChange,
                 placeholder = {
                     Text(
-                        stringResource(R.string.chat_input_hint),
+                        stringResource(
+                            when (mode) {
+                                SendMode.PLAN -> R.string.chat_plan_hint
+                                SendMode.IMAGE -> R.string.chat_image_hint
+                                SendMode.CHAT -> R.string.chat_input_hint
+                            }
+                        ),
                         color = TextTertiary,
                         style = MaterialTheme.typography.bodyLarge,
                     )
@@ -478,14 +693,65 @@ private fun ChatInputBar(
                     cursorColor = MaterialTheme.colorScheme.primary,
                 ),
             )
-            Spacer(Modifier.size(Spacing.sm))
+            IconButton(
+                onClick = onMic,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Mic,
+                    contentDescription = stringResource(R.string.chat_speak_to_text),
+                    tint = TextTertiary,
+                )
+            }
+            Spacer(Modifier.size(Spacing.xs))
             SendStopButton(
-                isStreaming = isStreaming,
-                enabled = text.isNotBlank(),
-                onSend = { onSend(text.trim(), planMode) },
+                isStreaming = isBusy,
+                enabled = text.isNotBlank() || attachmentPath != null,
+                onSend = { onSend(text.trim(), mode, webGrounded) },
                 onStop = onStop,
             )
         }
+    }
+}
+
+@Composable
+private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+        shape = InputBarShape,
+        border = null,
+        colors = FilterChipDefaults.filterChipColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            selectedContainerColor = MaterialTheme.colorScheme.primary,
+            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+        ),
+    )
+}
+
+@Composable
+private fun AttachmentThumbnail(path: String) {
+    val context = LocalContext.current
+    val bitmap = remember(path) {
+        com.rixy.bot.data.prefs.ImageStore(context).decodeBounded(path, 256)
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = null,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(MaterialTheme.shapes.small),
+        )
+    } else {
+        Icon(
+            Icons.Filled.Image,
+            contentDescription = null,
+            tint = TextTertiary,
+            modifier = Modifier.size(48.dp),
+        )
     }
 }
 
@@ -531,6 +797,101 @@ private fun SendStopButton(
                 ),
                 tint = MaterialTheme.colorScheme.onPrimary,
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ListeningSheet(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    var transcript by remember { mutableStateOf("") }
+    val recognizer = remember {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) return@remember null
+        SpeechRecognizer.createSpeechRecognizer(context).apply {
+            setRecognitionListener(object : android.speech.RecognitionListener {
+                override fun onReadyForSpeech(params: android.os.Bundle?) {}
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onError(error: Int) { /* sheet stays; user can retry or cancel */ }
+                override fun onResults(results: android.os.Bundle?) {
+                    results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()?.let { transcript = it }
+                }
+                override fun onPartialResults(partialResults: android.os.Bundle?) {
+                    partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()?.let { if (it.isNotBlank()) transcript = it }
+                }
+                override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+            })
+        }
+    }
+    DisposableEffect(recognizer) {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        }
+        recognizer?.startListening(intent)
+        onDispose {
+            recognizer?.stopListening()
+            recognizer?.destroy()
+        }
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.xxl, vertical = Spacing.lg),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+            ) {
+                Icon(
+                    Icons.Filled.Mic,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .padding(Spacing.lg)
+                        .size(28.dp),
+                )
+            }
+            Spacer(Modifier.height(Spacing.lg))
+            Text(
+                if (transcript.isBlank()) stringResource(R.string.chat_listening)
+                else transcript,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (transcript.isBlank()) TextTertiary
+                else MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(Spacing.lg))
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.chat_dismiss))
+                }
+                Surface(
+                    onClick = { onConfirm(transcript) },
+                    enabled = transcript.isNotBlank(),
+                    shape = InputBarShape,
+                    color = MaterialTheme.colorScheme.primary,
+                ) {
+                    Text(
+                        stringResource(R.string.chat_use_transcript),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.padding(horizontal = Spacing.xl, vertical = Spacing.md),
+                    )
+                }
+            }
+            Spacer(Modifier.height(Spacing.xxl))
         }
     }
 }

@@ -10,8 +10,25 @@ sealed class GeminiException(message: String, cause: Throwable? = null) : Except
     class Parse(cause: Throwable? = null) : GeminiException("parse", cause)
 }
 
-/** One turn of conversation history sent to the API. */
-data class ChatTurn(val isFromUser: Boolean, val text: String)
+/** Events emitted while streaming a chat reply. */
+sealed interface StreamEvent {
+    data class Delta(val text: String) : StreamEvent
+    data class Sources(val sources: List<Source>) : StreamEvent
+}
+
+/** One web source cited by a grounded answer. */
+data class Source(val title: String, val uri: String)
+
+/** One turn of conversation history sent to the API. Only the newest turn may carry an image. */
+data class ChatTurn(
+    val isFromUser: Boolean,
+    val text: String,
+    val imageBase64: String? = null,
+    val imageMimeType: String? = null,
+)
+
+/** A generated image with an optional caption. */
+data class GeneratedImage(val base64: String, val mimeType: String, val caption: String)
 
 /** A single item of a generated plan. */
 data class PlanItem(val title: String, val description: String, val priority: String)

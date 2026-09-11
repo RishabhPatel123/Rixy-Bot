@@ -3,6 +3,7 @@ package com.rixy.bot.network
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import okhttp3.Call
@@ -18,74 +19,131 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Minimal Gemini REST client: streaming chat, plan generation, and a key test.
- * The API key travels in the x-goog-api-key header, never in the URL.
+ * Minimal Gemini REST client: streaming chat (optionally Google-Search-grounded),
+ * image generation, plan generation, and a key test. The API key travels in the
+ * x-goog-api-key header, never in the URL.
  */
 class GeminiApiService(private val client: OkHttpClient) {
 
-    /** Streams the assistant reply for [history] (last item = the new user message). */
-    fun streamChat(history: List<ChatTurn>, apiKey: String, model: String): Flow<String> =
-        kotlinx.coroutines.flow.callbackFlow {
-            val contents = JSONArray()
-            history.forEach { turn ->
-                contents.put(
-                    JSONObject()
-                        .put("role", if (turn.isFromUser) "user" else "model")
-                        .put("parts", JSONArray().put(JSONObject().put("text", turn.text)))
-                )
+    /**
+     * Streams the assistant reply for [history] (last item = the new user message).
+     * When [webGrounded], the request carries the google_search tool and source
+     * citations arrive as [StreamEvent.Sources].
+     */
+    fun streamChat(
+        history: List<ChatTurn>,
+        apiKey: String,
+        model: String,
+        webGrounded: Boolean = false,
+    ): Flow<StreamEvent> = callbackFlow {
+        val contents = JSONArray()
+        history.forEach { turn ->
+            val parts = JSONArray()
+            if (turn.text.isNotEmpty()) {
+                parts.put(JSONObject().put("text", turn.text))
             }
-            val body = JSONObject()
-                .put(
-                    "systemInstruction",
+            turn.imageBase64?.let { image ->
+                parts.put(
                     JSONObject().put(
-                        "parts",
-                        JSONArray().put(JSONObject().put("text", SYSTEM_PROMPT))
+                        "inlineData",
+                        JSONObject()
+                            .put("mimeType", turn.imageMimeType ?: "image/png")
+                            .put("data", image)
                     )
                 )
-                .put("contents", contents)
-                .toString()
+            }
+            contents.put(
+                JSONObject()
+                    .put("role", if (turn.isFromUser) "user" else "model")
+                    .put("parts", parts)
+            )
+        }
+        val body = JSONObject()
+            .put(
+                "systemInstruction",
+                JSONObject().put(
+                    "parts",
+                    JSONArray().put(JSONObject().put("text", SYSTEM_PROMPT))
+                )
+            )
+            .put("contents", contents)
+        if (webGrounded) {
+            body.put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject())))
+        }
 
-            val request = Request.Builder()
-                .url("$BASE_URL/models/$model:streamGenerateContent?alt=sse")
-                .header("x-goog-api-key", apiKey)
-                .post(body.toRequestBody("application/json".toMediaType()))
-                .build()
+        val request = Request.Builder()
+            .url("$BASE_URL/models/$model:streamGenerateContent?alt=sse")
+            .header("x-goog-api-key", apiKey)
+            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .build()
 
-            val call = client.newCall(request)
-            call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    close(GeminiException.Network(e))
-                }
+        val call = client.newCall(request)
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                close(GeminiException.Network(e))
+            }
 
-                override fun onResponse(call: Call, response: Response) {
-                    response.use {
-                        if (!it.isSuccessful) {
-                            val errorBody = it.body?.string().orEmpty()
-                            close(errorFor(it.code, errorBody, model))
-                            return
-                        }
-                        try {
-                            val source = it.body?.source() ?: throw GeminiException.Parse()
-                            while (!source.exhausted()) {
-                                val line = source.readUtf8Line() ?: break
-                                if (!line.startsWith("data:")) continue
-                                val payload = line.removePrefix("data:").trim()
-                                if (payload.isEmpty() || payload == "[DONE]") continue
-                                GeminiParser.extractStreamText(payload)?.let { delta ->
-                                    trySend(delta)
-                                }
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    if (!it.isSuccessful) {
+                        val errorBody = it.body?.string().orEmpty()
+                        close(errorFor(it.code, errorBody, model))
+                        return
+                    }
+                    try {
+                        val source = it.body?.source() ?: throw GeminiException.Parse()
+                        val emittedSources = mutableSetOf<String>()
+                        while (!source.exhausted()) {
+                            val line = source.readUtf8Line() ?: break
+                            if (!line.startsWith("data:")) continue
+                            val payload = line.removePrefix("data:").trim()
+                            if (payload.isEmpty() || payload == "[DONE]") continue
+                            GeminiParser.extractStreamText(payload)?.let { delta ->
+                                trySend(StreamEvent.Delta(delta))
                             }
-                            close()
-                        } catch (e: IOException) {
-                            close(GeminiException.Network(e))
-                        } catch (e: Exception) {
-                            close(GeminiException.Parse(e))
+                            val sources = GeminiParser.extractSources(payload)
+                            if (sources.isNotEmpty()) {
+                                // Chunks repeat earlier citations; only surface new ones.
+                                val fresh = sources.filter { emittedSources.add(it.uri) }
+                                if (fresh.isNotEmpty()) trySend(StreamEvent.Sources(fresh))
+                            }
                         }
+                        close()
+                    } catch (e: IOException) {
+                        close(GeminiException.Network(e))
+                    } catch (e: Exception) {
+                        close(GeminiException.Parse(e))
                     }
                 }
-            })
-            awaitClose { call.cancel() }
-        }.flowOn(Dispatchers.IO)
+            }
+        })
+        awaitClose { call.cancel() }
+    }.flowOn(Dispatchers.IO)
+
+    /** Generates an image for a prompt using the dedicated image model. */
+    suspend fun generateImage(prompt: String, apiKey: String): GeneratedImage {
+        val body = JSONObject()
+            .put(
+                "contents",
+                JSONArray().put(
+                    JSONObject()
+                        .put("role", "user")
+                        .put("parts", JSONArray().put(JSONObject().put("text", prompt)))
+                )
+            )
+            .put(
+                "generationConfig",
+                JSONObject().put("responseModalities", JSONArray().put("TEXT").put("IMAGE"))
+            )
+            .toString()
+        val response = execute(
+            "$BASE_URL/models/$IMAGE_MODEL:generateContent",
+            apiKey,
+            body,
+            IMAGE_MODEL,
+        )
+        return GeminiParser.extractImageAndCaption(response)
+    }
 
     /** Generates a prioritized plan for a goal (non-streaming). */
     suspend fun generatePlan(goal: String, apiKey: String, model: String): List<PlanItem> {
@@ -111,7 +169,7 @@ class GeminiApiService(private val client: OkHttpClient) {
             "$BASE_URL/models/$model:generateContent",
             apiKey,
             body,
-            model
+            model,
         )
         val reply = GeminiParser.extractResponseText(response)
         return GeminiParser.parsePlan(reply)
@@ -161,6 +219,7 @@ class GeminiApiService(private val client: OkHttpClient) {
 
     companion object {
         private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+        const val IMAGE_MODEL = "gemini-3.1-flash-image"
         private const val SYSTEM_PROMPT =
             "You are Rixy, a helpful, direct Android assistant. Answer clearly and concisely. " +
                 "Use markdown: **bold**, bullet lists, numbered steps, and fenced code blocks with a " +

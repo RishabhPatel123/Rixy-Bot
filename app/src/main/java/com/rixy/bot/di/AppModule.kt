@@ -26,6 +26,7 @@ val appModule = module {
     single { get<RixyDatabase>().taskDao() }
     single { GeminiApiService(get()) }
     single { SecretsStore(androidContext()) }
+    single { com.rixy.bot.data.prefs.ImageStore(androidContext()) }
     single {
         ChatRepository(
             db = get(),
@@ -34,7 +35,7 @@ val appModule = module {
             taskDao = get(),
         )
     }
-    viewModel { ChatViewModel(get(), get(), get()) }
+    viewModel { ChatViewModel(get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get(), get(), get()) }
     viewModel { com.rixy.bot.ui.tasks.TasksViewModel(get()) }
 }

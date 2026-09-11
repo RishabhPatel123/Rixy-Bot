@@ -30,7 +30,14 @@ class ChatRepository(
 
     suspend fun renameChat(id: Long, title: String) = chatDao.renameChat(id, title)
 
-    suspend fun addMessage(chatId: Long, isFromUser: Boolean, text: String, planJson: String? = null) {
+    suspend fun addMessage(
+        chatId: Long,
+        isFromUser: Boolean,
+        text: String,
+        planJson: String? = null,
+        imagePath: String? = null,
+        sourcesJson: String? = null,
+    ) {
         val now = System.currentTimeMillis()
         db.withTransaction {
             messageDao.insertMessage(
@@ -40,8 +47,28 @@ class ChatRepository(
                     text = text,
                     timestamp = now,
                     planJson = planJson,
+                    imagePath = imagePath,
+                    sourcesJson = sourcesJson,
                 )
             )
+            chatDao.touchChat(chatId, now)
+        }
+    }
+
+    /** Inserts a full imported conversation under one chat. */
+    suspend fun importConversation(chatId: Long, messages: List<Pair<Boolean, String>>) {
+        val now = System.currentTimeMillis()
+        db.withTransaction {
+            messages.forEachIndexed { index, (isFromUser, text) ->
+                messageDao.insertMessage(
+                    ChatMessageEntity(
+                        chatId = chatId,
+                        isFromUser = isFromUser,
+                        text = text,
+                        timestamp = now + index,
+                    )
+                )
+            }
             chatDao.touchChat(chatId, now)
         }
     }
