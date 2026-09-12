@@ -96,6 +96,41 @@ fun RixyApp(secrets: SecretsStore) {
     var showImport by remember { mutableStateOf(false) }
     var importText by remember { mutableStateOf("") }
 
+    // If the previous launch crashed, surface the report so it can be shared
+    // even when we can't attach logcat.
+    var lastCrash by remember { mutableStateOf(com.rixy.bot.RixyApplication.lastCrashReport(context)) }
+    if (lastCrash != null) {
+        val report = lastCrash.orEmpty()
+        AlertDialog(
+            onDismissRequest = { lastCrash = null },
+            title = { Text(stringResource(R.string.crash_dialog_title)) },
+            text = {
+                Text(
+                    report.take(800),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    runCatching {
+                        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                        clipboard?.setPrimaryClip(
+                            android.content.ClipData.newPlainText("rixy_crash", report)
+                        )
+                    }
+                }) { Text(stringResource(R.string.settings_copy_crash)) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    java.io.File(context.filesDir, com.rixy.bot.RixyApplication.CRASH_FILE).delete()
+                    lastCrash = null
+                }) { Text(stringResource(R.string.crash_dialog_clear)) }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+        )
+    }
+
     val importFilePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->

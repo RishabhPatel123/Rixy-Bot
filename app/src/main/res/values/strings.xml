@@ -91,6 +91,12 @@
     <string name="settings_section_about">About</string>
     <string name="settings_version">Version %1$s</string>
     <string name="settings_source">Source code</string>
+    <string name="settings_keystore_degraded">Secure key storage is unavailable on this device — falling back to standard storage.</string>
+    <string name="settings_last_crash">Last crash report</string>
+    <string name="settings_copy_crash">Copy crash report</string>
+    <string name="settings_crash_copied">Copied ✓</string>
+    <string name="crash_dialog_title">Rixy closed unexpectedly</string>
+    <string name="crash_dialog_clear">Dismiss</string>
 
     <!-- Tasks -->
     <string name="tasks_title">Tasks</string>

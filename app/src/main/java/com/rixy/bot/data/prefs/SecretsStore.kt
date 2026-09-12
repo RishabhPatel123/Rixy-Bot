@@ -13,6 +13,8 @@ import com.rixy.bot.BuildConfig
  */
 class SecretsStore(context: Context) {
 
+    private val appContext: Context = context.applicationContext
+
     val defaultModel: String = DEFAULT_MODEL
 
     var geminiApiKey: String
@@ -46,17 +48,33 @@ class SecretsStore(context: Context) {
     }
 
     private val prefs: SharedPreferences by lazy {
-        val masterKey = MasterKey.Builder(context.applicationContext)
+        // Keystore-backed prefs can fail to initialize on some devices (corrupted
+        // master key after reinstalls, OEM keystore quirks). Never crash at
+        // startup over it: retry once after wiping the file, then fall back to
+        // plain prefs (flagged) so the app stays usable.
+        createEncryptedPrefs()
+            ?: runCatching { appContext.deleteSharedPreferences(PREFS_FILE) }
+                .let { createEncryptedPrefs() }
+            ?: appContext.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+                .also { degradedToPlain = true }
+    }
+
+    @Volatile
+    var degradedToPlain: Boolean = false
+        private set
+
+    private fun createEncryptedPrefs(): SharedPreferences? = runCatching {
+        val masterKey = MasterKey.Builder(appContext)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
         EncryptedSharedPreferences.create(
-            context.applicationContext,
+            appContext,
             PREFS_FILE,
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )
-    }
+    }.getOrNull()
 
     companion object {
         const val DEFAULT_MODEL = "gemini-2.5-flash"

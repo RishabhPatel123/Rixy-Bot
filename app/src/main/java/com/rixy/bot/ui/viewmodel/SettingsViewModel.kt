@@ -83,6 +83,9 @@ class SettingsViewModel(
         secrets.agentAllowedTools = emptySet()
     }
 
+    /** True when encrypted prefs failed and we fell back to plain storage. */
+    val degradedKeyStorage: Boolean get() = secrets.degradedToPlain
+
     fun deleteAllChats() {
         viewModelScope.launch {
             runCatching { repository.deleteAllChats() }

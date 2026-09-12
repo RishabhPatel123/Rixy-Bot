@@ -321,6 +321,56 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
             )
+            if (viewModel.degradedKeyStorage) {
+                Text(
+                    stringResource(R.string.settings_keystore_degraded),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = com.rixy.bot.ui.theme.Warning,
+                    modifier = Modifier.padding(top = Spacing.sm),
+                )
+            }
+            val crashReport = remember { com.rixy.bot.RixyApplication.lastCrashReport(context) }
+            if (crashReport != null) {
+                var copied by remember { mutableStateOf(false) }
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp, com.rixy.bot.ui.theme.Danger.copy(alpha = 0.5f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = Spacing.md),
+                ) {
+                    Column(Modifier.padding(Spacing.lg)) {
+                        Text(
+                            stringResource(R.string.settings_last_crash),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        Spacer(Modifier.height(Spacing.xs))
+                        Text(
+                            crashReport.take(400),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        TextButton(onClick = {
+                            val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                            clipboard?.setPrimaryClip(
+                                android.content.ClipData.newPlainText("rixy_crash", crashReport)
+                            )
+                            copied = true
+                        }) {
+                            Text(
+                                if (copied) stringResource(R.string.settings_crash_copied)
+                                else stringResource(R.string.settings_copy_crash)
+                            )
+                        }
+                    }
+                }
+            }
             TextButton(onClick = {
                 runCatching {
                     context.startActivity(

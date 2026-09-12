@@ -135,38 +135,42 @@ fun ChatScreen(
     var speakingMessageId by remember { mutableStateOf<Long?>(null) }
     val ttsReady = remember { mutableStateOf(false) }
     val tts = remember {
-        var engine: TextToSpeech? = null
-        engine = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                engine?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {}
-                    override fun onDone(utteranceId: String?) {
-                        utteranceId?.toLongOrNull()?.let { id -> speakingMessageId = null }
-                    }
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) {
-                        utteranceId?.toLongOrNull()?.let { speakingMessageId = null }
-                    }
-                })
-                ttsReady.value = true
+        runCatching {
+            var engine: TextToSpeech? = null
+            engine = TextToSpeech(context) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    engine?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {}
+                        override fun onDone(utteranceId: String?) {
+                            utteranceId?.toLongOrNull()?.let { speakingMessageId = null }
+                        }
+                        @Deprecated("Deprecated in Java")
+                        override fun onError(utteranceId: String?) {
+                            utteranceId?.toLongOrNull()?.let { speakingMessageId = null }
+                        }
+                    })
+                    ttsReady.value = true
+                }
             }
-        }
-        engine
+            engine
+        }.getOrNull()
     }
-    DisposableEffect(Unit) { onDispose { tts.shutdown() } }
+    DisposableEffect(Unit) { onDispose { tts?.shutdown() } }
     val speak: (ChatMessageEntity) -> Unit = { message ->
         val engine = tts
-        if (speakingMessageId == message.id) {
-            engine.stop()
-            speakingMessageId = null
-        } else {
-            speakingMessageId = message.id
-            engine.speak(
-                message.text,
-                TextToSpeech.QUEUE_FLUSH,
-                null,
-                message.id.toString(),
-            )
+        if (engine != null) {
+            if (speakingMessageId == message.id) {
+                engine.stop()
+                speakingMessageId = null
+            } else {
+                speakingMessageId = message.id
+                engine.speak(
+                    message.text,
+                    TextToSpeech.QUEUE_FLUSH,
+                    null,
+                    message.id.toString(),
+                )
+            }
         }
     }
 
