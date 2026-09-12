@@ -28,7 +28,6 @@ val appModule = module {
     single { SecretsStore(androidContext()) }
     single { com.rixy.bot.data.prefs.ImageStore(androidContext()) }
     single { com.rixy.bot.agent.ToolRegistry(com.rixy.bot.agent.ToolFactory.all()) }
-    single<android.content.Context> { androidContext() }
     single {
         ChatRepository(
             db = get(),
@@ -37,7 +36,11 @@ val appModule = module {
             taskDao = get(),
         )
     }
-    viewModel { ChatViewModel(get(), get(), get(), get(), get(), get()) }
+    // NOTE: never declare `single<Context> { androidContext() }` — androidContext()
+    // resolves Context through the registry, so such a definition recurses into
+    // itself (StackOverflowError at startup). startKoin { androidContext(...) }
+    // already registers it; reference it with androidContext() inside providers.
+    viewModel { ChatViewModel(get(), get(), get(), get(), get(), androidContext()) }
     viewModel { SettingsViewModel(get(), get(), get()) }
     viewModel { com.rixy.bot.ui.tasks.TasksViewModel(get()) }
 }
