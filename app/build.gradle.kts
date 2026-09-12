@@ -13,8 +13,8 @@ android {
     applicationId = "com.rixy.bot"
     minSdk = 24
     targetSdk = 36
-    versionCode = 3
-    versionName = "2.0.1"
+    versionCode = 4
+    versionName = "2.0.2"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
@@ -60,6 +60,22 @@ android {
 
 ksp {
   arg("room.schemaLocation", "${projectDir}/schemas")
+}
+
+// Android 15+/16 devices with 16KB memory pages refuse to load native libs
+// whose ELF segments are only 4KB-aligned (instant native crash at startup,
+// before any Java handler can run). Compose pulls an old graphics-path; force
+// the 16KB-aligned release.
+configurations.all {
+  resolutionStrategy.force("androidx.graphics:graphics-path:1.1.0")
+}
+
+android {
+  packaging {
+    jniLibs {
+      useLegacyPackaging = false
+    }
+  }
 }
 
 // Injects BuildConfig.GEMINI_API_KEY from .env (falls back to .env.example).
