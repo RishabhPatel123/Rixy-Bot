@@ -37,6 +37,8 @@ class ChatRepository(
         planJson: String? = null,
         imagePath: String? = null,
         sourcesJson: String? = null,
+        isError: Boolean = false,
+        retryJson: String? = null,
     ) {
         val now = System.currentTimeMillis()
         db.withTransaction {
@@ -49,10 +51,17 @@ class ChatRepository(
                     planJson = planJson,
                     imagePath = imagePath,
                     sourcesJson = sourcesJson,
+                    isError = isError,
+                    retryJson = retryJson,
                 )
             )
             chatDao.touchChat(chatId, now)
         }
+    }
+
+    /** Removes a single message (used to clear a failed bubble before retrying). */
+    suspend fun deleteMessage(id: Long) {
+        messageDao.deleteMessageById(id)
     }
 
     /** Inserts a full imported conversation under one chat. */

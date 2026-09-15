@@ -17,7 +17,8 @@ data class ChatEntity(
 /**
  * One message in a chat. [planJson], when present, holds a JSON array of planned tasks;
  * [imagePath] points at a local file (user attachment or generated image);
- * [sourcesJson] holds web-grounding sources as [{title, uri}].
+ * [sourcesJson] holds web-grounding sources as [{title, uri}];
+ * [isError] marks a failed response carrying [retryJson] so it can be retried.
  */
 @Entity(
     tableName = "messages",
@@ -32,6 +33,8 @@ data class ChatMessageEntity(
     val planJson: String? = null,
     val imagePath: String? = null,
     val sourcesJson: String? = null,
+    @ColumnInfo(defaultValue = "0") val isError: Boolean = false,
+    val retryJson: String? = null,
 )
 
 /** A task produced by Plan mode and saved by the user. */

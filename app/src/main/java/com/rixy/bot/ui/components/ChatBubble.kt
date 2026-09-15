@@ -8,47 +8,65 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.rixy.bot.R
 import com.rixy.bot.data.prefs.ImageStore
 import com.rixy.bot.network.Source
+import com.rixy.bot.ui.theme.Danger
 import com.rixy.bot.ui.theme.Motion
 import com.rixy.bot.ui.theme.Spacing
 import com.rixy.bot.ui.theme.SurfaceElevated
 import com.rixy.bot.ui.theme.TextTertiary
+import kotlinx.coroutines.delay
 import org.json.JSONArray
 
 private val UserBubbleShape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp)
@@ -68,7 +86,8 @@ private fun MessageImage(path: String, imageStore: ImageStore, modifier: Modifie
     }
 }
 
-/** A message from the user: right-aligned elevated bubble with optional attached image. */
+/** A message from the user: right-aligned elevated bubble; long-press copies the text. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun UserBubble(
     text: String,
@@ -77,11 +96,22 @@ fun UserBubble(
     modifier: Modifier = Modifier,
     animate: Boolean = true,
 ) {
+    val clipboard = LocalClipboardManager.current
+    val haptics = LocalHapticFeedback.current
     val bubble: @Composable () -> Unit = {
         Surface(
             modifier = Modifier
                 .widthIn(max = 300.dp)
-                .animateContentSize(animationSpec = Motion.settle()),
+                .animateContentSize(animationSpec = Motion.settle())
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        if (text.isNotBlank()) {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            clipboard.setText(AnnotatedString(text))
+                        }
+                    },
+                ),
             shape = UserBubbleShape,
             color = SurfaceElevated,
         ) {
@@ -100,6 +130,33 @@ fun UserBubble(
         }
     }
     if (animate) EnterAnimation(modifier = modifier) { bubble() } else Box(modifier) { bubble() }
+}
+
+/** Small icon button that copies text and flips to a checkmark briefly. */
+@Composable
+private fun CopyButton(text: String) {
+    val clipboard = LocalClipboardManager.current
+    var copied by rememberSaveable(text) { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1600)
+            copied = false
+        }
+    }
+    IconButton(
+        onClick = {
+            clipboard.setText(AnnotatedString(text))
+            copied = true
+        },
+        modifier = Modifier.size(32.dp),
+    ) {
+        Icon(
+            if (copied) Icons.Filled.Done else Icons.Filled.ContentCopy,
+            contentDescription = stringResource(R.string.chat_copy),
+            tint = if (copied) MaterialTheme.colorScheme.primary else TextTertiary,
+            modifier = Modifier.size(16.dp),
+        )
+    }
 }
 
 /**
@@ -157,19 +214,24 @@ fun RixyBubble(
                         SourceChips(sourcesJson)
                     }
                     if (onSpeak != null && text.isNotBlank()) {
-                        IconButton(
-                            onClick = onSpeak,
-                            modifier = Modifier
-                                .size(32.dp)
-                                .padding(top = Spacing.xs),
-                        ) {
-                            Icon(
-                                Icons.Filled.VolumeUp,
-                                contentDescription = stringResource(R.string.chat_speak),
-                                tint = if (speaking) MaterialTheme.colorScheme.primary else TextTertiary,
-                                modifier = Modifier.size(16.dp),
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = onSpeak,
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .padding(top = Spacing.xs),
+                            ) {
+                                Icon(
+                                    Icons.Filled.VolumeUp,
+                                    contentDescription = stringResource(R.string.chat_speak),
+                                    tint = if (speaking) MaterialTheme.colorScheme.primary else TextTertiary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                            CopyButton(text)
                         }
+                    } else if (text.isNotBlank()) {
+                        CopyButton(text)
                     }
                 }
             }
@@ -179,8 +241,7 @@ fun RixyBubble(
 }
 
 @Composable
-private fun SourceChips(sourcesJson: String) {
-    val sources = remember(sourcesJson) {
+private fun SourceChips(sourcesJson: String) {    val sources = remember(sourcesJson) {
         runCatching {
             val arr = JSONArray(sourcesJson)
             buildList {
@@ -273,4 +334,64 @@ fun TypingIndicator(modifier: Modifier = Modifier) {
             )
         }
     }
+}
+
+/** A failed response: honest error text plus a one-tap Retry. */
+@Composable
+fun ErrorBubble(
+    text: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+    animate: Boolean = true,
+) {
+    val content: @Composable () -> Unit = {
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, Danger.copy(alpha = 0.45f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(Spacing.lg)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                ) {
+                    Icon(
+                        Icons.Filled.ErrorOutline,
+                        contentDescription = null,
+                        tint = Danger,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        stringResource(R.string.chat_error_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+                Spacer(Modifier.height(Spacing.xs))
+                Text(
+                    text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(Spacing.md))
+                OutlinedButton(
+                    onClick = onRetry,
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Icon(
+                        Icons.Filled.Refresh,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp),
+                    )
+                    Text(
+                        stringResource(R.string.chat_retry),
+                        modifier = Modifier.padding(start = Spacing.xs),
+                    )
+                }
+            }
+        }
+    }
+    if (animate) EnterAnimation(modifier = modifier) { content() } else Box(modifier) { content() }
 }

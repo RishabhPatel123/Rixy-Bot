@@ -4,13 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.rixy.bot.data.model.ChatMessageEntity
 import com.rixy.bot.data.model.PlannedTaskEntity
+import com.rixy.bot.data.model.RetryPayload
 import com.rixy.bot.data.prefs.ImageStore
 import com.rixy.bot.data.prefs.SecretsStore
 import com.rixy.bot.data.repo.ChatRepository
 import com.rixy.bot.network.ChatTurn
 import com.rixy.bot.network.GeminiApiService
 import com.rixy.bot.network.GeminiException
-import com.rixy.bot.network.PlanItem
 import com.rixy.bot.network.Source
 import com.rixy.bot.network.StreamEvent
 import kotlinx.coroutines.CancellationException
@@ -131,35 +131,219 @@ class ChatViewModel(
         _attachedImagePath.value = path
     }
 
-    /** Entry point from the input bar. */
+    /** Entry point from the input bar: creates a chat, records the user message, executes. */
     fun sendMessage(rawText: String, mode: SendMode, webGrounded: Boolean) {
-        when (mode) {
-            SendMode.PLAN -> requestPlan(rawText)
-            SendMode.IMAGE -> requestImage(rawText)
-            SendMode.AGENT -> runAgent(rawText)
-            SendMode.CHAT -> sendChat(rawText, webGrounded)
+        val prompt = rawText.trim()
+        val attachment = _attachedImagePath.value
+        if ((prompt.isEmpty() && attachment == null) || busy()) return
+        _attachedImagePath.value = null
+
+        viewModelScope.launch {
+            val chatId = _selectedChatId.value
+                ?: repository.createChat(deriveTitle(prompt.ifEmpty { "Image" }), System.currentTimeMillis())
+                    .also { _selectedChatId.value = it }
+            runCatching {
+                repository.addMessage(chatId, isFromUser = true, text = prompt, imagePath = attachment)
+            }
+            execute(mode, prompt, attachment, webGrounded, chatId)
         }
     }
 
-    /** Agent mode: let Gemini call device tools to fulfill the request. */
-    private fun runAgent(rawRequest: String) {
-        val request = rawRequest.trim()
-        if (request.isEmpty() || busy()) return
+    /** Retries a failed message: removes it and re-runs the stored request. */
+    fun retryMessage(message: ChatMessageEntity) {
+        if (busy()) return
+        val payload = message.retryJson?.let { RetryPayload.fromJson(it) } ?: return
+        val mode = runCatching { SendMode.valueOf(payload.mode) }.getOrDefault(SendMode.CHAT)
+        viewModelScope.launch {
+            runCatching { repository.deleteMessage(message.id) }
+            _selectedChatId.value = message.chatId
+            execute(mode, payload.prompt, payload.attachmentPath, payload.webGrounded, message.chatId)
+        }
+    }
 
+    /** Runs a request whose user message already exists in [chatId]. */
+    private fun execute(
+        mode: SendMode,
+        prompt: String,
+        attachment: String?,
+        webGrounded: Boolean,
+        chatId: Long,
+    ) {
+        when (mode) {
+            SendMode.PLAN -> runPlan(prompt, chatId)
+            SendMode.IMAGE -> runImage(prompt, attachment, chatId)
+            SendMode.AGENT -> runAgent(prompt, chatId)
+            SendMode.CHAT -> runChat(prompt, attachment, webGrounded, chatId)
+        }
+    }
+
+    private suspend fun insertFailure(chatId: Long, message: String, payload: RetryPayload) {
+        runCatching {
+            repository.addMessage(
+                chatId,
+                isFromUser = false,
+                text = message,
+                isError = true,
+                retryJson = payload.toJson(),
+            )
+        }
+    }
+
+    private fun runChat(prompt: String, attachment: String?, webGrounded: Boolean, chatId: Long) {
         viewModelScope.launch {
             val apiKey = secrets.resolveApiKey()
             val model = secrets.geminiModel
             if (apiKey == null) {
                 _events.emit(ChatUiEvent.Error(NO_KEY_MESSAGE, canRetry = true))
+                insertFailure(chatId, NO_KEY_MESSAGE, RetryPayload("CHAT", prompt, attachment, webGrounded))
                 return@launch
             }
 
-            val chatId = ensureChat(request)
-            runCatching { repository.addMessage(chatId, isFromUser = true, text = request) }
+            val history = buildHistory(chatId, attachment)
+            _isStreaming.value = true
+            _streamingText.value = ""
+            streamingChatId = chatId
+            val buffer = StringBuilder()
+            val sources = mutableListOf<Source>()
+
+            streamJob = launch {
+                try {
+                    gemini.streamChat(history, apiKey, model, webGrounded).collect { event ->
+                        when (event) {
+                            is StreamEvent.Delta -> {
+                                buffer.append(event.text)
+                                _streamingText.value = buffer.toString()
+                            }
+                            is StreamEvent.Sources -> sources += event.sources
+                        }
+                    }
+                    val finalText = buffer.toString()
+                    if (finalText.isNotBlank() || attachment != null) {
+                        repository.addMessage(
+                            chatId,
+                            isFromUser = false,
+                            text = finalText,
+                            sourcesJson = sourcesToJson(sources),
+                        )
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    val partial = buffer.toString()
+                    if (partial.isNotBlank()) {
+                        runCatching {
+                            repository.addMessage(
+                                chatId,
+                                isFromUser = false,
+                                text = "$partial\n\n*${STOPPED_NOTE}*",
+                                sourcesJson = sourcesToJson(sources),
+                            )
+                        }
+                    } else {
+                        val reason = userMessage(e)
+                        _events.emit(ChatUiEvent.Error(reason, canRetry = true))
+                        insertFailure(
+                            chatId,
+                            reason,
+                            RetryPayload("CHAT", prompt, attachment, webGrounded),
+                        )
+                    }
+                } finally {
+                    _isStreaming.value = false
+                    _streamingText.value = null
+                    streamingChatId = null
+                }
+            }
+        }
+    }
+
+    private fun runImage(prompt: String, attachment: String?, chatId: Long) {
+        viewModelScope.launch {
+            val apiKey = secrets.resolveApiKey()
+            if (apiKey == null) {
+                _events.emit(ChatUiEvent.Error(NO_KEY_MESSAGE, canRetry = false))
+                insertFailure(chatId, NO_KEY_MESSAGE, RetryPayload("IMAGE", prompt, attachment))
+                return@launch
+            }
+
+            _isGeneratingImage.value = true
+            try {
+                val image = gemini.generateImage(prompt, apiKey)
+                val savedPath = imageStore.saveBase64(image.base64, image.mimeType)
+                repository.addMessage(
+                    chatId,
+                    isFromUser = false,
+                    text = image.caption.ifEmpty { "Generated image" },
+                    imagePath = savedPath,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val reason = userMessage(e)
+                _events.emit(ChatUiEvent.Error(reason, canRetry = false))
+                insertFailure(chatId, reason, RetryPayload("IMAGE", prompt, attachment))
+            } finally {
+                _isGeneratingImage.value = false
+            }
+        }
+    }
+
+    private fun runPlan(goal: String, chatId: Long) {
+        viewModelScope.launch {
+            val apiKey = secrets.resolveApiKey()
+            val model = secrets.geminiModel
+            if (apiKey == null) {
+                _events.emit(ChatUiEvent.Error(NO_KEY_MESSAGE, canRetry = false))
+                insertFailure(chatId, NO_KEY_MESSAGE, RetryPayload("PLAN", goal))
+                return@launch
+            }
+
+            _isPlanning.value = true
+            try {
+                val plan = gemini.generatePlan(goal, apiKey, model)
+                val jsonArray = JSONArray().apply {
+                    plan.forEach { item ->
+                        put(
+                            JSONObject()
+                                .put("title", item.title)
+                                .put("description", item.description)
+                                .put("priority", item.priority)
+                        )
+                    }
+                }
+                repository.addMessage(
+                    chatId,
+                    isFromUser = false,
+                    text = "Here's a plan for **${goal.take(80)}**:",
+                    planJson = jsonArray.toString(),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val reason = userMessage(e)
+                _events.emit(ChatUiEvent.PlanFailed(reason))
+                insertFailure(chatId, reason, RetryPayload("PLAN", goal))
+            } finally {
+                _isPlanning.value = false
+            }
+        }
+    }
+
+    private fun runAgent(request: String, chatId: Long) {
+        viewModelScope.launch {
+            val apiKey = secrets.resolveApiKey()
+            val model = secrets.geminiModel
+            if (apiKey == null) {
+                _events.emit(ChatUiEvent.Error(NO_KEY_MESSAGE, canRetry = true))
+                insertFailure(chatId, NO_KEY_MESSAGE, RetryPayload("AGENT", request))
+                return@launch
+            }
+
             val history = runCatching {
                 repository.getHistory(chatId)
                     .dropLast(1) // the request itself is appended by the executor
                     .takeLast(20)
+                    .filterNot { it.isError }
                     .map { it.isFromUser to it.text }
             }.getOrDefault(emptyList())
 
@@ -221,177 +405,21 @@ class ChatViewModel(
                         else outcome.actions.joinToString("\n") + "\n\n" + outcome.text
                         repository.addMessage(chatId, isFromUser = false, text = text)
                     }
-                    is com.rixy.bot.agent.AgentExecutor.Outcome.Failed ->
+                    is com.rixy.bot.agent.AgentExecutor.Outcome.Failed -> {
                         _events.emit(ChatUiEvent.Error(outcome.message, canRetry = true))
+                        insertFailure(chatId, outcome.message, RetryPayload("AGENT", request))
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _events.emit(ChatUiEvent.Error(userMessage(e), canRetry = true))
+                val reason = userMessage(e)
+                _events.emit(ChatUiEvent.Error(reason, canRetry = true))
+                insertFailure(chatId, reason, RetryPayload("AGENT", request))
             } finally {
                 _isAgentWorking.value = false
                 _agentStatus.value = null
                 _pendingConfirmation.value = null
-            }
-        }
-    }
-
-    /** Called by the UI after a runtime permission requested by the agent resolves. */
-    fun onPermissionResult(granted: Boolean) {
-        permissionDeferred?.complete(granted)
-    }
-
-    private fun sendChat(rawText: String, webGrounded: Boolean) {
-        val prompt = rawText.trim()
-        val attachment = _attachedImagePath.value
-        if ((prompt.isEmpty() && attachment == null) || busy()) return
-        _attachedImagePath.value = null
-
-        viewModelScope.launch {
-            val chatId = ensureChat(prompt.ifEmpty { "Image" })
-            runCatching {
-                repository.addMessage(chatId, isFromUser = true, text = prompt, imagePath = attachment)
-            }
-
-            val apiKey = secrets.resolveApiKey()
-            val model = secrets.geminiModel
-            if (apiKey == null) {
-                _events.emit(ChatUiEvent.Error(NO_KEY_MESSAGE, canRetry = true))
-                return@launch
-            }
-
-            val history = buildHistory(chatId, attachment)
-            _isStreaming.value = true
-            _streamingText.value = ""
-            streamingChatId = chatId
-            val buffer = StringBuilder()
-            val sources = mutableListOf<Source>()
-
-            streamJob = launch {
-                try {
-                    gemini.streamChat(history, apiKey, model, webGrounded).collect { event ->
-                        when (event) {
-                            is StreamEvent.Delta -> {
-                                buffer.append(event.text)
-                                _streamingText.value = buffer.toString()
-                            }
-                            is StreamEvent.Sources -> sources += event.sources
-                        }
-                    }
-                    val finalText = buffer.toString()
-                    if (finalText.isNotBlank() || attachment != null) {
-                        repository.addMessage(
-                            chatId,
-                            isFromUser = false,
-                            text = finalText,
-                            sourcesJson = sourcesToJson(sources),
-                        )
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    val partial = buffer.toString()
-                    if (partial.isNotBlank()) {
-                        runCatching {
-                            repository.addMessage(
-                                chatId,
-                                isFromUser = false,
-                                text = "$partial\n\n*${STOPPED_NOTE}*",
-                                sourcesJson = sourcesToJson(sources),
-                            )
-                        }
-                    } else {
-                        _events.emit(ChatUiEvent.Error(userMessage(e), canRetry = true))
-                    }
-                } finally {
-                    _isStreaming.value = false
-                    _streamingText.value = null
-                    streamingChatId = null
-                }
-            }
-        }
-    }
-
-    /** Image mode: generate an image for the prompt (an attachment acts as a style reference). */
-    private fun requestImage(rawText: String) {
-        val prompt = rawText.trim()
-        val attachment = _attachedImagePath.value
-        if (prompt.isEmpty() && attachment == null) return
-        if (busy()) return
-        _attachedImagePath.value = null
-
-        viewModelScope.launch {
-            val chatId = ensureChat(prompt.ifEmpty { "Image" })
-            runCatching {
-                repository.addMessage(chatId, isFromUser = true, text = prompt, imagePath = attachment)
-            }
-
-            val apiKey = secrets.resolveApiKey() ?: run {
-                _events.emit(ChatUiEvent.Error(NO_KEY_MESSAGE, canRetry = false))
-                return@launch
-            }
-
-            _isGeneratingImage.value = true
-            try {
-                val image = gemini.generateImage(prompt, apiKey)
-                val savedPath = imageStore.saveBase64(image.base64, image.mimeType)
-                repository.addMessage(
-                    chatId,
-                    isFromUser = false,
-                    text = image.caption.ifEmpty { "Generated image" },
-                    imagePath = savedPath,
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _events.emit(ChatUiEvent.Error(userMessage(e), canRetry = false))
-            } finally {
-                _isGeneratingImage.value = false
-            }
-        }
-    }
-
-    /** Plan mode: decompose a goal into tasks, rendered as a plan card in the chat. */
-    fun requestPlan(rawGoal: String) {
-        val goal = rawGoal.trim()
-        if (goal.isEmpty() || busy()) return
-
-        viewModelScope.launch {
-            val chatId = ensureChat(goal)
-            runCatching { repository.addMessage(chatId, isFromUser = true, text = PLAN_PREFIX + goal) }
-
-            val apiKey = secrets.resolveApiKey()
-            val model = secrets.geminiModel
-            if (apiKey == null) {
-                _events.emit(ChatUiEvent.Error(NO_KEY_MESSAGE, canRetry = false))
-                return@launch
-            }
-
-            _isPlanning.value = true
-            try {
-                val plan = gemini.generatePlan(goal, apiKey, model)
-                val jsonArray = JSONArray().apply {
-                    plan.forEach { item ->
-                        put(
-                            JSONObject()
-                                .put("title", item.title)
-                                .put("description", item.description)
-                                .put("priority", item.priority)
-                        )
-                    }
-                }
-                repository.addMessage(
-                    chatId,
-                    isFromUser = false,
-                    text = "Here's a plan for **${goal.take(80)}**:",
-                    planJson = jsonArray.toString(),
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _events.emit(ChatUiEvent.PlanFailed(userMessage(e)))
-            } finally {
-                _isPlanning.value = false
             }
         }
     }
@@ -463,23 +491,26 @@ class ChatViewModel(
         }
     }
 
+    /** Called by the UI after a runtime permission requested by the agent resolves. */
+    fun onPermissionResult(granted: Boolean) {
+        permissionDeferred?.complete(granted)
+    }
+
     private fun busy() =
         _isStreaming.value || _isPlanning.value || _isGeneratingImage.value || _isAgentWorking.value
-
-    private suspend fun ensureChat(firstPrompt: String): Long =
-        _selectedChatId.value
-            ?: repository.createChat(deriveTitle(firstPrompt), System.currentTimeMillis())
-                .also { _selectedChatId.value = it }
 
     /**
      * Builds API history: the newest message keeps its actual image bytes; older
      * image messages degrade to a "[image attached]" text placeholder to keep
-     * request size predictable.
+     * request size predictable. Failed messages are excluded.
      */
     private suspend fun buildHistory(chatId: Long, currentAttachment: String?): List<ChatTurn> {
         val history = runCatching { repository.getHistory(chatId) }.getOrDefault(emptyList())
-        return history.takeLast(HISTORY_LIMIT).mapIndexed { index, msg ->
-            val isLast = index == history.takeLast(HISTORY_LIMIT).lastIndex
+        val windowed = history
+            .filterNot { it.isError }
+            .takeLast(HISTORY_LIMIT)
+        return windowed.mapIndexed { index, msg ->
+            val isLast = index == windowed.lastIndex
             val imagePath = msg.imagePath
             val carriesImage = isLast && msg.isFromUser && imagePath != null && imagePath == currentAttachment
             ChatTurn(

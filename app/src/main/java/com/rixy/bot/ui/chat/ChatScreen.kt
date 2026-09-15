@@ -48,6 +48,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
@@ -94,6 +95,7 @@ import com.rixy.bot.R
 import com.rixy.bot.data.model.ChatMessageEntity
 import com.rixy.bot.ui.components.EnterAnimation
 import com.rixy.bot.ui.components.ErrorBanner
+import com.rixy.bot.ui.components.ErrorBubble
 import com.rixy.bot.ui.components.RixyBubble
 import com.rixy.bot.ui.components.TypingIndicator
 import com.rixy.bot.ui.components.UserBubble
@@ -199,6 +201,9 @@ fun ChatScreen(
     val gallerySaveFailedMessage = stringResource(R.string.chat_image_save_failed)
     val importedMessage = stringResource(R.string.import_success)
     val planSavedMessage = stringResource(R.string.chat_plan_saved)
+    val chatCopiedMessage = stringResource(R.string.chat_copy_all_done)
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyScope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
@@ -242,7 +247,28 @@ fun ChatScreen(
             .navigationBarsPadding()
             .imePadding(),
     ) {
-        ChatTopBar(title = chatTitle, onOpenDrawer = onOpenDrawer, onNewChat = onNewChat)
+        ChatTopBar(
+            title = chatTitle,
+            onOpenDrawer = onOpenDrawer,
+            onNewChat = onNewChat,
+            onCopyChat = {
+                val transcript = messages
+                    .filterNot { it.isError }
+                    .joinToString("\n\n") {
+                        (if (it.isFromUser) "You: " else "Rixy: ") + it.text
+                    }
+                if (transcript.isNotBlank()) {
+                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(transcript))
+                    copyScope.launch {
+                        snackbarHostState.showSnackbar(
+                            chatCopiedMessage,
+                            duration = SnackbarDuration.Short,
+                        )
+                    }
+                }
+            },
+            messagesEmpty = messages.isEmpty(),
+        )
         SnackbarHost(snackbarHostState)
 
         Box(modifier = Modifier.weight(1f)) {
@@ -273,6 +299,7 @@ fun ChatScreen(
                         onSpeak = speak,
                         onPlanSave = viewModel::savePlanToTasks,
                         onSaveImage = viewModel::saveImageToGallery,
+                        onRetry = viewModel::retryMessage,
                     )
                 }
             }
@@ -350,7 +377,13 @@ fun ChatScreen(
 }
 
 @Composable
-private fun ChatTopBar(title: String, onOpenDrawer: () -> Unit, onNewChat: () -> Unit) {
+private fun ChatTopBar(
+    title: String,
+    onOpenDrawer: () -> Unit,
+    onNewChat: () -> Unit,
+    onCopyChat: () -> Unit,
+    messagesEmpty: Boolean,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -371,6 +404,15 @@ private fun ChatTopBar(title: String, onOpenDrawer: () -> Unit, onNewChat: () ->
             maxLines = 1,
             modifier = Modifier.weight(1f),
         )
+        if (!messagesEmpty) {
+            IconButton(onClick = onCopyChat) {
+                Icon(
+                    Icons.Filled.ContentCopy,
+                    contentDescription = stringResource(R.string.chat_copy_all),
+                    tint = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+        }
         IconButton(onClick = onNewChat) {
             Icon(
                 Icons.Filled.Add,
@@ -394,6 +436,7 @@ private fun MessageList(
     onSpeak: (ChatMessageEntity) -> Unit,
     onPlanSave: (String) -> Unit,
     onSaveImage: (String) -> Unit,
+    onRetry: (ChatMessageEntity) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val initialTopId = remember { messages.maxOfOrNull { it.id } ?: Long.MIN_VALUE }
@@ -411,8 +454,13 @@ private fun MessageList(
         items(messages, key = { it.id }) { message ->
             val isNew = message.id > initialTopId
             Box(modifier = Modifier.animateItem()) {
-                if (message.isFromUser) {
-                    Row(
+                when {
+                    message.isError -> ErrorBubble(
+                        text = message.text,
+                        onRetry = { onRetry(message) },
+                        animate = isNew,
+                    )
+                    message.isFromUser -> Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
                     ) {
@@ -423,10 +471,8 @@ private fun MessageList(
                             animate = isNew,
                         )
                     }
-                } else if (message.planJson != null) {
-                    PlanCard(message.planJson, onPlanSave, animate = isNew)
-                } else {
-                    RixyBubble(
+                    message.planJson != null -> PlanCard(message.planJson, onPlanSave, animate = isNew)
+                    else -> RixyBubble(
                         text = message.text,
                         imagePath = message.imagePath,
                         sourcesJson = message.sourcesJson,

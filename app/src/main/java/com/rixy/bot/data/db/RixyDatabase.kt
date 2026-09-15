@@ -12,7 +12,7 @@ import com.rixy.bot.data.model.PlannedTaskEntity
 
 @Database(
     entities = [ChatEntity::class, ChatMessageEntity::class, PlannedTaskEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class RixyDatabase : RoomDatabase() {
@@ -28,9 +28,16 @@ abstract class RixyDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN isError INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE messages ADD COLUMN retryJson TEXT")
+            }
+        }
+
         fun build(context: Context): RixyDatabase =
             Room.databaseBuilder(context, RixyDatabase::class.java, "rixy.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

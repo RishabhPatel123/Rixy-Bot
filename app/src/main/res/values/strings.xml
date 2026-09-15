@@ -113,6 +113,9 @@
     <string name="chat_agent_mode">Agent</string>
     <string name="chat_agent_hint">Tell Rixy to do something on your phone…</string>
 
+    <string name="chat_copy_all">Copy conversation</string>
+    <string name="chat_copy_all_done">Conversation copied</string>
+
     <!-- Agent -->
     <string name="agent_working">Working…</string>
     <string name="agent_confirm_title">Allow this action?</string>
